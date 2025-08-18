@@ -70,65 +70,37 @@ class Feedback(BaseModel):
 
 
 class SeniorityLevel(BaseModel):
-    """Seniority level options"""
+    """Seniority level options - now in German"""
     level: str
     years: str
     display_name: str
 
 
+# Updated SENIORITY_LEVELS in German
 SENIORITY_LEVELS = [
-    SeniorityLevel(level="entry", years="0-1 Jahre", display_name="Entry Level"),
-    SeniorityLevel(level="junior", years="1-5 Jahre", display_name="Junior"),
-    SeniorityLevel(level="mid", years="6-9 Jahre", display_name="Mid-Level"),
-    SeniorityLevel(level="senior", years="10+ Jahre", display_name="Senior")
+    SeniorityLevel(level="einstieg", years="0-2 Jahre", display_name="Einstieg"),
+    SeniorityLevel(level="junior", years="2-4 Jahre", display_name="Junior"),
+    SeniorityLevel(level="mittel", years="4-7 Jahre", display_name="Erfahren"),
+    SeniorityLevel(level="senior", years="7-12 Jahre", display_name="Senior"),
+    SeniorityLevel(level="lead", years="12+ Jahre", display_name="Lead")
 ]
 
 class JobAdRequest(BaseModel):
-    """Job ad generation request model - simplified to match your implementation"""
+    """Job ad generation request model - removed pay_range"""
     job_title: str = Field(..., min_length=1, max_length=80)
     additional_context: Optional[str] = Field(None, max_length=2000)
     seniority_level: Optional[str] = Field(None, help="Optional seniority level to add to job title")
     seniority_years: Optional[str] = Field(None, help="Years of experience for the seniority level")
-    pay_range: Optional[str] = Field(None, help="Optional pay range description")  # ADD THIS LINE
-
-# Also add these at the top of the same file:
-
-class PayRange(BaseModel):
-    """Pay range options in German"""
-    key: str
-    display_name: str
-    description: str
-
-# Add these constants
-PAY_RANGES = [
-    PayRange(
-        key="attraktiv",
-        display_name="Attraktives Gehalt",
-        description="Ein überdurchschnittliches Gehalt für die Position"
-    ),
-    PayRange(
-        key="sehr_gut",
-        display_name="Sehr gutes Gehalt",
-        description="Ein sehr wettbewerbsfähiges Gehalt mit zusätzlichen Benefits"
-    ),
-    PayRange(
-        key="wettbewerbsfaehig",
-        display_name="Wettbewerbsfähiges Gehalt",
-        description="Ein marktgerechtes Gehalt entsprechend der Branche"
-    ),
-    PayRange(
-        key="fair",
-        display_name="Faires Gehalt",
-        description="Eine angemessene Vergütung für die Anforderungen"
-    )
-]
+    # Removed pay_range field
 
 class UserPreferences(BaseModel):
-    """User preferences for job ad generation"""
-    tone: str = Field(default="professional", pattern=r'^(professional|casual|speaks to job seeker directly)$')
+    """Enhanced user preferences for job ad generation"""
+    # Core tone options - now includes 'lockerer' as separate option
+    tone: str = Field(default="sie", pattern=r'^(sie|du|ohne)$')
+    casual_tone: bool = Field(default=False, help="Make it more casual/relaxed regardless of Sie/Du")
     formality_level: str = Field(default="formal", pattern=r'^(formal|semi_formal|casual)$')
-    candidate_focus: str = Field(default="fokus", pattern=r'^(experience|potential|tätigkeiten|culture_fit)$')
-    language_style: str = Field(default="standard", pattern=r'^(standard|creative|einfacher Deutsch)$')
+    candidate_focus: str = Field(default="experience", pattern=r'^(experience|potential|skills|culture,mission,vision)$')
+    language_style: str = Field(default="Standard", pattern=r'^(Standard|Einfacher Deutsch|Kreativ)$')
 
     class Config:
         arbitrary_types_allowed = True
