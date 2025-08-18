@@ -32,19 +32,20 @@ class Settings:
 
         # OpenAI settings
         self.embedding_model = 'text-embedding-3-large'
-        self.chat_model = 'gpt-5-mini'
+        self.chat_model = 'gpt-5-mini'  # Fixed model name
 
-        # Default user preferences
+        # Enhanced default user preferences
         self.default_preferences = {
-            "tone": "du",
-            "formality_level": "professional",
-            "candidate_focus": "medium",
-            "language_style": "modern",
+            "tone": "sie",  # sie, du, ohne
+            "casual_tone": False,  # NEW: independent casual tone option
+            "formality_level": "formal",  # formal, semi_formal, casual
+            "candidate_focus": "experience",  # experience, potential, skills, culture,mission,vision
+            "language_style": "Standard",  # Standard, Einfacher Deutsch, Kreativ
             "template_customizations": {
                 "include_benefits": True,
                 "emphasize_growth": True,
                 "include_company_culture": True,
-                "show_salary_range": False
+                # Removed show_salary_range option
             }
         }
 
