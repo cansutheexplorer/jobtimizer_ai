@@ -2,6 +2,7 @@ import asyncio
 from openai import AsyncOpenAI
 from typing import Dict, List
 import logging
+import random
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,26 @@ class OpenAIService:
             "url": raw.get("url")
         }
 
+    def _generate_randomization_seed(self) -> Dict:
+        """Generate randomization parameters to ensure variety in job ads"""
+        return {
+            "structure_variant": random.choice([
+                "classic", "benefits_first", "culture_focus", "tasks_heavy"
+            ]),
+            "intro_style": random.choice([
+                "direct", "welcoming", "mission_driven", "opportunity_focused"
+            ]),
+            "benefits_emphasis": random.choice([
+                "growth", "work_life", "team", "innovation", "stability"
+            ]),
+            "closing_tone": random.choice([
+                "encouraging", "professional", "excited", "straightforward"
+            ]),
+            "detail_level": random.choice([
+                "concise", "detailed", "moderate"
+            ])
+        }
+
     async def generate_job_ad(
             self,
             esco_data: Dict,
@@ -111,7 +132,7 @@ class OpenAIService:
             additional_context: str = "",
             final_job_title: str = None
     ) -> str:
-        """Generate a German job ad using OpenAI with AGG compliance, tone scaling, and seniority support"""
+        """Generate a German job ad with enhanced tone logic and randomization"""
 
         # Normalize incoming ESCO data
         esco_data = self._normalize_esco_data(esco_data)
@@ -119,96 +140,91 @@ class OpenAIService:
         # Use final job title if provided, otherwise use ESCO name
         job_title_to_use = final_job_title or esco_data.get('name', 'Unknown Position')
 
-        system_prompt = """You are Jobtimizer, an expert system for generating and refining German job advertisements that are 10% Company max, and then about 30% Tasks, Profile and Benefits - depends on the Role & Department.
-Your purpose is to help companies create inclusive, professional, and optimized job ads based on ESCO occupational data, company context, user preferences, and seniority levels.
+        # Generate randomization parameters
+        randomization = self._generate_randomization_seed()
 
-## Core Rules
-- Always comply with German AGG (Allgemeines Gleichbehandlungsgesetz):
-  - Keine Diskriminierung nach Rasse oder ethnischer Herkunft
-  - Geschlecht: immer gendergerechte Formulierungen (z. B. "Mitarbeiter*in", "Kolleg*innen")
-  - Religion und Weltanschauung: neutral, diskriminierungsfrei
-  - Behinderung: keine Einschränkungen oder diskriminierende Formulierungen
-  - Alter: niemals Begriffe wie „junges Team", keine Alterspräferenzen
-  - Sexuelle Identität: inklusiv, ohne stereotype Sprache
+        system_prompt = """Du bist Jobtimizer, ein Expertensystem für die Erstellung deutscher Stellenanzeigen, die AGG-konform, professionell und zielgruppengerecht sind.
 
-## Seniority Level Handling
-When a seniority level is provided in the job title or additional context:
-- Entry Level (0-2 Jahre): Focus on learning opportunities, mentoring, basic requirements
-- Junior (2-4 Jahre): Emphasize growth potential, teamwork, foundational skills
-- Mid-Level (4-7 Jahre): Highlight project responsibility, technical expertise, leadership potential
-- Senior (7-12 Jahre): Focus on strategic thinking, mentoring others, complex problem solving
-- Lead/Principal (12+ Jahre): Emphasize vision, architecture decisions, team leadership, industry expertise
+## Wichtige Anweisungen
 
-Adjust the entire job ad accordingly:
-- Requirements should match the seniority level
-- Responsibilities should be appropriate for the experience level
-- Language tone should suit the target audience
-- Benefits should appeal to professionals at that career stage
+### AGG-Konformität (ABSOLUT ZWINGEND)
+- Immer gendergerechte Sprache verwenden (m/w/d, Mitarbeiter*innen, etc.)
+- Keine Altersangaben oder -präferenzen ("junges Team" etc.)
+- Keine diskriminierenden Formulierungen bezüglich Herkunft, Religion, Behinderung, sexueller Identität
 
-## Tone and Experience Scale
-- Introduce a Tone/Experience Scale (1–5):
-  - 1 = Senior/Expert audience → fachlich anspruchsvoll, detailliert, längere Texte
-  - 5 = Entry-level audience → leicht verständlich, zugänglich, kürzere Texte
-- Adjust tone, length, and focus automatically based on:
-  - Candidate experience level (from seniority level and/or ESCO role)
-  - User's feedback (e.g., "make it shorter", "use Du instead of Sie", "focus on teamwork")
+### Anrede und Tonalität
+Du erhältst Präferenzen für:
+1. **tone**: "sie", "du", "ohne" (Anrede-Form)
+2. **casual_tone**: true/false (Lockerer Stil - UNABHÄNGIG von Sie/Du)
 
-## Input Structure
-You will always receive structured input:
+**Wichtig**: "casual_tone" = true bedeutet lockerer/entspannter, auch wenn "Sie" verwendet wird!
 
-[JOB TITLE]
-{job_title}
+Beispiele:
+- tone="sie" + casual_tone=false: "Sie bringen Erfahrung mit und haben..."
+- tone="sie" + casual_tone=true: "Sie haben Lust auf spannende Projekte und bringen mit..."
+- tone="du" + casual_tone=false: "Du bringst fundierte Kenntnisse mit und verfügst über..."
+- tone="du" + casual_tone=true: "Du hast Bock auf neue Herausforderungen und bringst mit..."
+- tone="ohne": Keine direkte Anrede, neutral formulieren
 
-[ESCO BERUFSDATEN]
-{esco_data}
+### Aufgaben und Profil-Abschnitte
+Diese müssen IMMER vollständige Sätze sein, nicht nur Stichpunkte:
 
-[UNTERNEHMENSINFORMATIONEN]
-{company_info}
+**Bei tone="du":**
+- "Du entwickelst innovative Softwarelösungen"
+- "Du bringst mindestens 3 Jahre Erfahrung mit"
+- "Du arbeitest eng mit unserem Entwicklungsteam zusammen"
 
-[NUTZERPRÄFERENZEN]
-{preferences}
+**Bei tone="sie":**
+- "Sie entwickeln innovative Softwarelösungen"
+- "Sie bringen mindestens 3 Jahre Erfahrung mit"
+- "Sie arbeiten eng mit unserem Entwicklungsteam zusammen"
 
-[ZUSÄTZLICHER KONTEXT]
-{additional_context}
+**Bei tone="ohne":**
+- "Entwicklung innovativer Softwarelösungen"
+- "Mindestens 3 Jahre Berufserfahrung erforderlich"
+- "Enge Zusammenarbeit mit dem Entwicklungsteam"
 
-## Task
-1. Generate a German job advertisement that integrates all inputs and respects seniority level.
-2. Ensure consistency across multiple outputs (same formatting, tone scale, compliance).
-3. Make the ad professional, human-readable, and ready for publishing.
-4. Adapt content complexity and requirements based on seniority level.
-5. Mark placeholders clearly if information is missing.
+### Wir bieten-Abschnitt
+NUR ausfüllen wenn:
+- Konkrete Zusatzinformationen über Benefits im additional_context stehen
+- Ansonsten minimal halten oder ganz weglassen
 
-## Refinement Loop
-When given an original ad and user feedback:
-- Interpret the feedback precisely (tone scale, length, focus, Du/Sie, seniority adjustments).
-- Apply changes without losing overall consistency.
-- Maintain AGG compliance at all times.
-- Respect seniority-appropriate content.
-- Return the improved ad as the final output.
+### Seniority-Anpassung
+Passe Inhalt und Sprache an die Erfahrungsstufe an:
+- **Einstieg/Junior**: Einfacher, Fokus auf Lernen und Entwicklung
+- **Erfahren/Mid**: Ausgewogene Anforderungen und Verantwortung
+- **Senior/Lead**: Anspruchsvoller, Führung und strategisches Denken
+
+### Randomisierung für Vielfalt
+Nutze verschiedene Strukturen und Formulierungen, damit nicht alle Anzeigen gleich aussehen, auch bei ähnlichen Unternehmen.
+
+## Input-Format
+Du erhältst strukturierte Daten zu Job, Unternehmen, Präferenzen und Kontext.
 
 ## Output
-- Return only the final German job ad text, clean and publishable.
-- Use the provided job title exactly as given (including seniority prefix if present).
-- Do not explain your reasoning, just output the optimized ad."""
+Gib NUR die fertige deutsche Stellenanzeige aus - sauber formatiert und publikationsbereit."""
 
-        user_prompt = f"""Erstelle eine deutsche Stellenanzeige mit folgenden Eingaben:
+        user_prompt = f"""Erstelle eine deutsche Stellenanzeige mit diesen Daten:
 
-[JOB TITLE]
-{job_title_to_use}
+**JOBTITEL**: {job_title_to_use}
 
-[ESCO BERUFSDATEN]
-{esco_data}
+**ESCO-BERUFSDATEN**: {esco_data}
 
-[UNTERNEHMENSINFORMATIONEN]
-{company_info}
+**UNTERNEHMEN**: {company_info}
 
-[NUTZERPRÄFERENZEN]
-{preferences}
+**PRÄFERENZEN**: {preferences}
 
-[ZUSÄTZLICHER KONTEXT]
-{additional_context}
+**ZUSATZKONTEXT**: {additional_context}
 
-Verwende den angegebenen Job Title exakt wie vorgegeben. Falls ein Seniority Level im Titel enthalten ist (z.B. "Senior", "Junior", "Lead"), passe die gesamte Stellenanzeige entsprechend an das Erfahrungslevel an."""
+**RANDOMISIERUNG**: {randomization}
+
+WICHTIGE REGELN:
+1. Verwende den Jobtitel EXAKT wie angegeben
+2. Anrede nach "tone"-Präferenz: {preferences.get('tone', 'sie')}
+3. Lockerer Stil wenn casual_tone=True: {preferences.get('casual_tone', False)}
+4. Aufgaben & Profil als vollständige Sätze (nicht Stichpunkte!)
+5. "Wir bieten" nur bei konkreten Benefits-Infos im Zusatzkontext
+6. Seniority-gerechte Sprache und Anforderungen"""
 
         try:
             response = await self.client.chat.completions.create(
@@ -217,7 +233,8 @@ Verwende den angegebenen Job Title exakt wie vorgegeben. Falls ein Seniority Lev
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_completion_tokens=2000
+                max_completion_tokens=2000,
+                temperature=0.7  # Added some creativity for variety
             )
             generated_ad = response.choices[0].message.content
             logger.info(f"Job ad generated successfully for title: {job_title_to_use}")
@@ -228,23 +245,31 @@ Verwende den angegebenen Job Title exakt wie vorgegeben. Falls ein Seniority Lev
             raise
 
     async def refine_job_ad_with_feedback(self, original_ad: str, feedback: Dict) -> str:
-        """Refine job ad based on user feedback while maintaining seniority appropriateness"""
+        """Refine job ad based on user feedback with enhanced tone awareness"""
 
         feedback_prompt = """Du bist Jobtimizer und spezialisiert auf die Verfeinerung deutscher Stellenanzeigen basierend auf Nutzerfeedback.
 
 ## Wichtige Regeln für die Verfeinerung:
-1. Halte die AGG-Konformität ein (keine Diskriminierung nach Geschlecht, Alter, etc.)
-2. Behalte das Seniority Level bei - wenn die ursprüngliche Anzeige für "Senior" oder "Junior" Positionen war, passe das Feedback entsprechend an
-3. Achte auf angemessene Anforderungen für das Erfahrungslevel
-4. Verwende gendergerechte Sprache
-5. Halte den professionellen Ton bei
+1. **AGG-Konformität beibehalten** (gendergerechte Sprache, keine Diskriminierung)
+2. **Seniority Level respektieren** - ursprüngliche Zielgruppe beibehalten
+3. **Ton-Logik verstehen**:
+   - "lockerer" = entspannter/lockerer Stil (unabhängig von Sie/Du)
+   - "mehr_formell" = formeller/professioneller
+   - "weniger_formell" = siehe "lockerer"
 
-## Bei Seniority-Levels beachten:
-- Entry/Junior: Einfachere Sprache, Fokus auf Lernen und Entwicklung
-- Mid-Level: Ausgewogene Mischung aus Anforderungen und Entwicklungsmöglichkeiten  
-- Senior/Lead: Anspruchsvollere Sprache, Fokus auf Führung und Expertise
+## Spezielle Feedback-Behandlung:
+- **"lockerer"**: Mache es entspannter, auch bei "Sie" verwendbar
+- **"mehr_formell"**: Professioneller und strukturierter
+- **"mehr_benefits"**: Ergänze sinnvolle Benefits
+- **"mehr_unternehmenskultur"**: Betone Kultur und Werte
 
-Verfeinere die Stellenanzeige entsprechend dem Feedback, aber halte sie angemessen für das ursprüngliche Seniority Level."""
+## Aufgaben & Profil Abschnitte:
+Immer vollständige Sätze, angepasst an die Anrede:
+- Bei Du-Form: "Du entwickelst...", "Du bringst mit..."
+- Bei Sie-Form: "Sie entwickeln...", "Sie bringen mit..."
+- Ohne direkte Anrede: "Entwicklung von...", "Erforderlich sind..."
+
+Verfeinere die Stellenanzeige entsprechend, aber halte das Seniority Level und die Grundstruktur bei."""
 
         user_message = f"""
 URSPRÜNGLICHE STELLENANZEIGE:
@@ -253,7 +278,11 @@ URSPRÜNGLICHE STELLENANZEIGE:
 NUTZERFEEDBACK:
 {feedback}
 
-Bitte verfeinere die Stellenanzeige entsprechend diesem Feedback, aber achte darauf, dass das Seniority Level und die damit verbundenen Anforderungen angemessen bleiben."""
+Bitte verfeinere die Stellenanzeige entsprechend diesem Feedback. Achte besonders darauf:
+- Vollständige Sätze in Aufgaben/Profil-Abschnitten
+- Angemessene Anrede-Form beibehalten
+- "Lockerer" bedeutet entspannter, aber nicht unprofessionell
+- Seniority-Level-gerechte Inhalte beibehalten"""
 
         try:
             response = await self.client.chat.completions.create(
@@ -262,11 +291,12 @@ Bitte verfeinere die Stellenanzeige entsprechend diesem Feedback, aber achte dar
                     {"role": "system", "content": feedback_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                max_completion_tokens=2000
+                max_completion_tokens=2000,
+                temperature=0.6  # Slight creativity for refinement
             )
 
             refined_ad = response.choices[0].message.content
-            logger.info("Job ad refined successfully with seniority awareness")
+            logger.info("Job ad refined successfully with enhanced tone awareness")
             return refined_ad
 
         except Exception as e:
