@@ -187,7 +187,7 @@ class SyncJobtimizerService:
             return [{"name": "couldn't found", "esco_code": "", "description": "", "score": 0.0}]
 
     def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
-        """Stellenanzeige mit Vektorsuche für ESCO-Matching generieren - removed pay_range"""
+        """Generate job ad - REMOVED pay_range handling"""
         try:
             async def generate_async():
                 # Get user data
@@ -218,7 +218,7 @@ class SyncJobtimizerService:
                     if seniority_obj:
                         final_job_title = f"{seniority_obj.display_name} {request.job_title}"
 
-                # Removed pay range handling - no longer needed
+                # REMOVED: pay_range_context handling - no longer needed
 
                 # Add seniority context only
                 seniority_context = ""
@@ -336,7 +336,7 @@ class SyncJobtimizerService:
             raise
 
     def _update_user_preferences_from_feedback(self, user_id: str, feedback: FeedbackRequest):
-        """Update user preferences based on feedback patterns - updated for new structure"""
+        """Update user preferences based on feedback patterns - UPDATED for new feedback options"""
         try:
             async def update_preferences_async():
                 user = await db_service.get_user_by_id(user_id)
@@ -352,8 +352,8 @@ class SyncJobtimizerService:
                         if click == "mehr_formell":
                             preferences['formality_level'] = 'formal'
                             updated = True
-                        elif click == "lockerer":  # Updated from "weniger_formell"
-                            preferences['casual_tone'] = True
+                        elif click == "lockerer":  # CHANGED: was "weniger_formell"
+                            preferences['casual_tone'] = True  # NEW: Set casual_tone flag
                             updated = True
                         elif click == "mehr_du_ton":
                             preferences['tone'] = 'du'
@@ -362,8 +362,9 @@ class SyncJobtimizerService:
                             preferences['tone'] = 'sie'
                             updated = True
                         elif click == "mehr_benefits":
-                            # Note: We don't have template_customizations anymore
-                            # Could add a benefits flag to preferences if needed
+                            if 'template_customizations' not in preferences:
+                                preferences['template_customizations'] = {}
+                            preferences['template_customizations']['include_benefits'] = True
                             updated = True
 
                 # Analyze text feedback
@@ -373,13 +374,7 @@ class SyncJobtimizerService:
                         preferences['formality_level'] = 'formal'
                         updated = True
                     elif 'locker' in text or 'casual' in text:
-                        preferences['casual_tone'] = True
-                        updated = True
-                    elif 'du' in text:
-                        preferences['tone'] = 'du'
-                        updated = True
-                    elif 'sie' in text:
-                        preferences['tone'] = 'sie'
+                        preferences['casual_tone'] = True  # NEW: Set casual_tone flag
                         updated = True
 
                 # Save updated preferences
