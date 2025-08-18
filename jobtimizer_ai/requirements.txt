@@ -1,21 +1,19 @@
 # Core
 streamlit==1.47.1
 python-dotenv==1.1.1
-motor==3.7.1
-# Database
-pymongo==4.14.0
 nest-asyncio==1.6.0
+
+# Database
+motor==3.7.1
+pymongo==4.14.0
 
 # OpenAI / LLM services
 openai==1.88.0
-
-# Optional if using LangChain or related modules
 langchain==0.3.25
 huggingface-hub==0.30.2
 transformers==4.51.3
 
-# Utilities you may import
+# Utilities
 pandas==2.2.3
 numpy==2.2.5
 tiktoken==0.9.0
-
