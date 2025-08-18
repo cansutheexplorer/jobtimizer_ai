@@ -1,11 +1,6 @@
 # config/settings.py
 import os
-from dotenv import load_dotenv
 from urllib.parse import quote_plus
-
-# Load environment variables from .env file
-load_dotenv()
-
 
 class Settings:
     """Application settings loaded from environment variables"""
@@ -27,7 +22,7 @@ class Settings:
         if not self.openai_api_key:
             raise ValueError("Missing OPENAI_API_KEY environment variable")
 
-        # Application Configuration
+        # Application secret
         self.secret_key = os.getenv('SECRET_KEY', 'default-secret-key-change-in-production')
 
         # Collection names
@@ -52,7 +47,6 @@ class Settings:
                 "show_salary_range": False
             }
         }
-
 
 # Global settings instance
 settings = Settings()
