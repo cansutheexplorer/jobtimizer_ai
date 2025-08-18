@@ -88,8 +88,6 @@ class JobAdRequest(BaseModel):
     additional_context: Optional[str] = Field(None, max_length=2000)
     seniority_level: Optional[str] = Field(None)
     seniority_years: Optional[str] = Field(None)
-    pay_range: Optional[str] = Field(None, help="Salary or compensation info")
-
 
 class UserPreferences(BaseModel):
     """Enhanced user preferences for job ad generation"""
@@ -123,5 +121,6 @@ class User(BaseModel):
 
 # Alias for readability
 EscoOccupation = ESCOData
+
 
 
