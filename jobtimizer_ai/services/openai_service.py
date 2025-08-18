@@ -233,7 +233,7 @@ WICHTIGE REGELN:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_completion_tokens=2000
+                max_completion_tokens=4096
             )
             generated_ad = response.choices[0].message.content
             logger.info(f"Job ad generated successfully for title: {job_title_to_use}")
@@ -290,7 +290,7 @@ Bitte verfeinere die Stellenanzeige entsprechend diesem Feedback. Achte besonder
                     {"role": "system", "content": feedback_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                max_completion_tokens=2000
+                max_completion_tokens=4096
             )
 
             refined_ad = response.choices[0].message.content
@@ -304,3 +304,4 @@ Bitte verfeinere die Stellenanzeige entsprechend diesem Feedback. Achte besonder
 
 # Global OpenAI service instance
 openai_service = OpenAIService()
+
