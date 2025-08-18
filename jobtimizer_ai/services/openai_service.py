@@ -233,8 +233,7 @@ WICHTIGE REGELN:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_completion_tokens=2000,
-                temperature=0.7  # Added some creativity for variety
+                max_completion_tokens=2000
             )
             generated_ad = response.choices[0].message.content
             logger.info(f"Job ad generated successfully for title: {job_title_to_use}")
@@ -291,8 +290,7 @@ Bitte verfeinere die Stellenanzeige entsprechend diesem Feedback. Achte besonder
                     {"role": "system", "content": feedback_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                max_completion_tokens=2000,
-                temperature=0.6  # Slight creativity for refinement
+                max_completion_tokens=2000
             )
 
             refined_ad = response.choices[0].message.content
