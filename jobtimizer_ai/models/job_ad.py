@@ -76,13 +76,11 @@ class SeniorityLevel(BaseModel):
     display_name: str
 
 
-# Updated SENIORITY_LEVELS in German
 SENIORITY_LEVELS = [
-    SeniorityLevel(level="einstieg", years="0-2 Jahre", display_name="Einstieg"),
-    SeniorityLevel(level="junior", years="2-4 Jahre", display_name="Junior"),
-    SeniorityLevel(level="mittel", years="4-7 Jahre", display_name="Erfahren"),
-    SeniorityLevel(level="senior", years="7-12 Jahre", display_name="Senior"),
-    SeniorityLevel(level="lead", years="12+ Jahre", display_name="Lead")
+    SeniorityLevel(level="entry", years="0-1 Jahre", display_name="Entry Level"),
+    SeniorityLevel(level="junior", years="1-5 Jahre", display_name="Junior"),
+    SeniorityLevel(level="mid", years="6-9 Jahre", display_name="Mid-Level"),
+    SeniorityLevel(level="senior", years="10+ Jahre", display_name="Senior")
 ]
 
 class JobAdRequest(BaseModel):
@@ -125,3 +123,4 @@ class User(BaseModel):
 
 # Alias for readability
 EscoOccupation = ESCOData
+
