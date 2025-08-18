@@ -187,73 +187,73 @@ class SyncJobtimizerService:
             return [{"name": "couldn't found", "esco_code": "", "description": "", "score": 0.0}]
 
     def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
-        """Stellenanzeige mit Vektorsuche für ESCO-Matching generieren"""
-        try:
-            async def generate_async():
-                # Get user data
-                user = await db_service.get_user_by_id(user_id)
-                if not user:
-                    raise ValueError("Benutzer nicht gefunden")
+    """Stellenanzeige mit Vektorsuche für ESCO-Matching generieren"""
+    try:
+        async def generate_async():
+            # Get user data
+            user = await db_service.get_user_by_id(user_id)
+            if not user:
+                raise ValueError("Benutzer nicht gefunden")
 
-                # Vector search for matching occupation
-                occupations = await self._search_occupations_async(request.job_title, limit=1)
+            # Vector search for matching occupation
+            occupations = await self._search_occupations_async(request.job_title, limit=1)
 
-                if not occupations or occupations[0].get("name") == "couldn't found":
-                    broader_query = request.job_title.split()[0]
-                    occupations = await self._search_occupations_async(broader_query, limit=1)
+            if not occupations or occupations[0].get("name") == "couldn't found":
+                broader_query = request.job_title.split()[0]
+                occupations = await self._search_occupations_async(broader_query, limit=1)
 
-                if not occupations or occupations[0].get("name") == "couldn't found":
-                    raise ValueError(f"Keine passende Berufsbezeichnung gefunden für: {request.job_title}")
+            if not occupations or occupations[0].get("name") == "couldn't found":
+                raise ValueError(f"Keine passende Berufsbezeichnung gefunden für: {request.job_title}")
 
-                raw_esco_data = occupations[0]
+            raw_esco_data = occupations[0]
 
-                company_info = user.get('company_info', {})
-                preferences = user.get('preferences', settings.default_preferences)
+            company_info = user.get('company_info', {})
+            preferences = user.get('preferences', settings.default_preferences)
 
-                # Prepare the final job title with seniority if provided
-                final_job_title = request.job_title
-                if request.seniority_level and request.seniority_years:
-                    from models.job_ad import SENIORITY_LEVELS
-                    seniority_obj = next((s for s in SENIORITY_LEVELS if s.level == request.seniority_level), None)
-                    if seniority_obj:
-                        final_job_title = f"{seniority_obj.display_name} {request.job_title}"
+            # Prepare the final job title with seniority if provided
+            final_job_title = request.job_title
+            if request.seniority_level and request.seniority_years:
+                from models.job_ad import SENIORITY_LEVELS
+                seniority_obj = next((s for s in SENIORITY_LEVELS if s.level == request.seniority_level), None)
+                if seniority_obj and seniority_obj.display_name:  # Only add if display_name exists
+                    final_job_title = f"{seniority_obj.display_name} {request.job_title}"
 
-                # Add seniority context - REMOVED pay_range_context
-                seniority_context = ""
-                if request.seniority_level and request.seniority_years:
-                    seniority_context = f"Seniority Level: {request.seniority_level} ({request.seniority_years} Erfahrung). "
+            # Add seniority context - NO pay_range_context
+            seniority_context = ""
+            if request.seniority_level and request.seniority_years:
+                seniority_context = f"Seniority Level: {request.seniority_level} ({request.seniority_years} Erfahrung). "
 
-                combined_context = seniority_context + (request.additional_context or "")
+            combined_context = seniority_context + (request.additional_context or "")
 
-                # Generate job ad using OpenAI service
-                job_ad = await openai_service.generate_job_ad(
-                    esco_data=raw_esco_data,
-                    company_info=company_info,
-                    preferences=preferences,
-                    additional_context=combined_context,
-                    final_job_title=final_job_title
-                )
+            # Generate job ad using OpenAI service
+            job_ad = await openai_service.generate_job_ad(
+                esco_data=raw_esco_data,
+                company_info=company_info,
+                preferences=preferences,
+                additional_context=combined_context,
+                final_job_title=final_job_title
+            )
 
-                # Normalize ESCO data
-                normalized_esco_data = openai_service._normalize_esco_data(raw_esco_data)
+            # Normalize ESCO data
+            normalized_esco_data = openai_service._normalize_esco_data(raw_esco_data)
 
-                from models import ESCOData
-                esco_data_obj = ESCOData(**normalized_esco_data)
+            from models import ESCOData
+            esco_data_obj = ESCOData(**normalized_esco_data)
 
-                return JobAdResponse(
-                    job_ad=job_ad,
-                    esco_data=esco_data_obj,
-                    generation_timestamp=datetime.utcnow(),
-                    user_id=user_id
-                )
+            return JobAdResponse(
+                job_ad=job_ad,
+                esco_data=esco_data_obj,
+                generation_timestamp=datetime.utcnow(),
+                user_id=user_id
+            )
 
-            response = self._run_async(generate_async())
-            logger.info(f"Stellenanzeige generiert für Benutzer {user_id}, ESCO-Match: {response.esco_data.name}")
-            return response
+        response = self._run_async(generate_async())
+        logger.info(f"Stellenanzeige generiert für Benutzer {user_id}, ESCO-Match: {response.esco_data.name}")
+        return response
 
-        except Exception as e:
-            logger.error(f"Fehler bei der Stellenanzeigen-Generierung: {e}")
-            raise
+    except Exception as e:
+        logger.error(f"Fehler bei der Stellenanzeigen-Generierung: {e}")
+        raise
 
     def update_user_preferences(self, user_id: str, preferences: Dict) -> bool:
         """Update user preferences"""
@@ -393,3 +393,4 @@ class SyncJobtimizerService:
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
+
