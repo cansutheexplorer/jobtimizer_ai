@@ -2,7 +2,9 @@ import asyncio
 from typing import Dict, List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 import logging
-from datetime import datetime  # Add this import
+from datetime import datetime
+import threading
+import random
 
 from services.database import db_service
 from services.openai_service import openai_service
@@ -11,9 +13,6 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-
-import asyncio
-import threading
 
 class SyncJobtimizerService:
     def __init__(self):
@@ -37,6 +36,54 @@ class SyncJobtimizerService:
         except Exception as e:
             logger.error(f"Async execution error: {e}")
             raise
+
+    def _fix_job_title_formatting(self, title: str) -> str:
+        """Fix job title formatting - ensure spaces around /"""
+        if not title:
+            return title
+
+        import re
+        # Replace / with " / " but avoid double spaces
+        fixed_title = re.sub(r'\s*/\s*', ' / ', title)
+        return fixed_title
+
+    def search_job_titles(self, query: str, limit: int = 8) -> List[Dict]:
+        """Search job titles for autocomplete suggestions using vector embeddings"""
+        if len(query) < 2:
+            return []
+
+        try:
+            async def search_titles_async():
+                # Embed user input
+                query_embedding = await openai_service.create_embedding(query)
+
+                # Vector search in DB
+                occupations = await db_service.vector_search_occupations(query_embedding, limit)
+
+                if not occupations:
+                    return [{"title": "couldn't found", "original_name": "", "esco_code": "", "description": ""}]
+
+                # Format results with proper formatting
+                suggestions = []
+                for occ in occupations:
+                    name = occ.get('name', 'Unknown')
+                    # Fix formatting and add (m/w/d)
+                    formatted_name = self._fix_job_title_formatting(name)
+                    name_with_suffix = f"{formatted_name} (m/w/d)"
+
+                    suggestions.append({
+                        'title': name_with_suffix,
+                        'original_name': formatted_name,
+                        'esco_code': occ.get('esco_code', ''),
+                        'description': occ.get('description', '')[:100] + '...' if occ.get('description') else ''
+                    })
+                return suggestions
+
+            return self._run_async(search_titles_async())
+
+        except Exception as e:
+            logger.error(f"Job title search error: {e}")
+            return [{"title": "couldn't found", "original_name": "", "esco_code": "", "description": ""}]
 
     def initialize(self):
         """Initialize the service"""
@@ -73,41 +120,6 @@ class SyncJobtimizerService:
         except Exception as e:
             logger.error(f"Failed to initialize sync service: {e}")
             return False
-
-    def search_job_titles(self, query: str, limit: int = 8) -> List[Dict]:
-        """Search job titles for autocomplete suggestions using vector embeddings"""
-        if len(query) < 2:
-            return []
-
-        try:
-            async def search_titles_async():
-                # Embed user input
-                query_embedding = await openai_service.create_embedding(query)
-
-                # Vector search in DB
-                occupations = await db_service.vector_search_occupations(query_embedding, limit)
-
-                if not occupations:
-                    return [{"title": "couldn't found", "original_name": "", "esco_code": "", "description": ""}]
-
-                # Format results
-                suggestions = []
-                for occ in occupations:
-                    name = occ.get('name', 'Unknown')
-                    name_with_suffix = f"{name} (m/w/d)"
-                    suggestions.append({
-                        'title': name_with_suffix,
-                        'original_name': name,
-                        'esco_code': occ.get('esco_code', ''),
-                        'description': occ.get('description', '')[:100] + '...' if occ.get('description') else ''
-                    })
-                return suggestions
-
-            return self._run_async(search_titles_async())
-
-        except Exception as e:
-            logger.error(f"Job title search error: {e}")
-            return [{"title": "couldn't found", "original_name": "", "esco_code": "", "description": ""}]
 
     def authenticate_user(self, username: str, password: str) -> Optional[Dict]:
         """Authenticate user"""
@@ -187,73 +199,73 @@ class SyncJobtimizerService:
             return [{"name": "couldn't found", "esco_code": "", "description": "", "score": 0.0}]
 
     def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
-    """Stellenanzeige mit Vektorsuche für ESCO-Matching generieren"""
-    try:
-        async def generate_async():
-            # Get user data
-            user = await db_service.get_user_by_id(user_id)
-            if not user:
-                raise ValueError("Benutzer nicht gefunden")
+        """Generate job ad with enhanced randomization and formatting"""
+        try:
+            async def generate_async():
+                # Get user data
+                user = await db_service.get_user_by_id(user_id)
+                if not user:
+                    raise ValueError("Benutzer nicht gefunden")
 
-            # Vector search for matching occupation
-            occupations = await self._search_occupations_async(request.job_title, limit=1)
+                # Vector search for matching occupation
+                occupations = await self._search_occupations_async(request.job_title, limit=1)
 
-            if not occupations or occupations[0].get("name") == "couldn't found":
-                broader_query = request.job_title.split()[0]
-                occupations = await self._search_occupations_async(broader_query, limit=1)
+                if not occupations or occupations[0].get("name") == "couldn't found":
+                    broader_query = request.job_title.split()[0]
+                    occupations = await self._search_occupations_async(broader_query, limit=1)
 
-            if not occupations or occupations[0].get("name") == "couldn't found":
-                raise ValueError(f"Keine passende Berufsbezeichnung gefunden für: {request.job_title}")
+                if not occupations or occupations[0].get("name") == "couldn't found":
+                    raise ValueError(f"Keine passende Berufsbezeichnung gefunden für: {request.job_title}")
 
-            raw_esco_data = occupations[0]
+                raw_esco_data = occupations[0]
 
-            company_info = user.get('company_info', {})
-            preferences = user.get('preferences', settings.default_preferences)
+                company_info = user.get('company_info', {})
+                preferences = user.get('preferences', settings.default_preferences)
 
-            # Prepare the final job title with seniority if provided
-            final_job_title = request.job_title
-            if request.seniority_level and request.seniority_years:
-                from models.job_ad import SENIORITY_LEVELS
-                seniority_obj = next((s for s in SENIORITY_LEVELS if s.level == request.seniority_level), None)
-                if seniority_obj and seniority_obj.display_name:  # Only add if display_name exists
-                    final_job_title = f"{seniority_obj.display_name} {request.job_title}"
+                # Prepare the final job title with seniority if provided
+                final_job_title = self._fix_job_title_formatting(request.job_title)
+                if request.seniority_level and request.seniority_years:
+                    from models.job_ad import SENIORITY_LEVELS
+                    seniority_obj = next((s for s in SENIORITY_LEVELS if s.level == request.seniority_level), None)
+                    if seniority_obj:
+                        final_job_title = f"{seniority_obj.display_name} {final_job_title}"
 
-            # Add seniority context - NO pay_range_context
-            seniority_context = ""
-            if request.seniority_level and request.seniority_years:
-                seniority_context = f"Seniority Level: {request.seniority_level} ({request.seniority_years} Erfahrung). "
+                # Add seniority context for AI
+                seniority_context = ""
+                if request.seniority_level and request.seniority_years:
+                    seniority_context = f"Seniority Level: {request.seniority_level} ({request.seniority_years} Erfahrung). "
 
-            combined_context = seniority_context + (request.additional_context or "")
+                combined_context = seniority_context + (request.additional_context or "")
 
-            # Generate job ad using OpenAI service
-            job_ad = await openai_service.generate_job_ad(
-                esco_data=raw_esco_data,
-                company_info=company_info,
-                preferences=preferences,
-                additional_context=combined_context,
-                final_job_title=final_job_title
-            )
+                # Generate job ad using OpenAI service
+                job_ad = await openai_service.generate_job_ad(
+                    esco_data=raw_esco_data,
+                    company_info=company_info,
+                    preferences=preferences,
+                    additional_context=combined_context,
+                    final_job_title=final_job_title
+                )
 
-            # Normalize ESCO data
-            normalized_esco_data = openai_service._normalize_esco_data(raw_esco_data)
+                # Normalize ESCO data
+                normalized_esco_data = openai_service._normalize_esco_data(raw_esco_data)
 
-            from models import ESCOData
-            esco_data_obj = ESCOData(**normalized_esco_data)
+                from models import ESCOData
+                esco_data_obj = ESCOData(**normalized_esco_data)
 
-            return JobAdResponse(
-                job_ad=job_ad,
-                esco_data=esco_data_obj,
-                generation_timestamp=datetime.utcnow(),
-                user_id=user_id
-            )
+                return JobAdResponse(
+                    job_ad=job_ad,
+                    esco_data=esco_data_obj,
+                    generation_timestamp=datetime.utcnow(),
+                    user_id=user_id
+                )
 
-        response = self._run_async(generate_async())
-        logger.info(f"Stellenanzeige generiert für Benutzer {user_id}, ESCO-Match: {response.esco_data.name}")
-        return response
+            response = self._run_async(generate_async())
+            logger.info(f"Stellenanzeige generiert für Benutzer {user_id}, ESCO-Match: {response.esco_data.name}")
+            return response
 
-    except Exception as e:
-        logger.error(f"Fehler bei der Stellenanzeigen-Generierung: {e}")
-        raise
+        except Exception as e:
+            logger.error(f"Fehler bei der Stellenanzeigen-Generierung: {e}")
+            raise
 
     def update_user_preferences(self, user_id: str, preferences: Dict) -> bool:
         """Update user preferences"""
@@ -292,7 +304,7 @@ class SyncJobtimizerService:
     def refine_job_ad_with_feedback(self, original_ad: str,
                                     feedback_request: FeedbackRequest,
                                     user_id: str) -> str:
-        """Refine job ad based on feedback"""
+        """Refine job ad based on feedback with enhanced logic"""
         try:
             async def refine_async():
                 # Convert feedback to expected format
@@ -344,14 +356,15 @@ class SyncJobtimizerService:
                 preferences = user.get('preferences', {})
                 updated = False
 
-                # Analyze button clicks - Updated for new feedback options
+                # Analyze button clicks with enhanced logic
                 if feedback.button_clicks:
                     for click in feedback.button_clicks:
                         if click == "mehr_formell":
                             preferences['formality_level'] = 'formal'
+                            preferences['casual_tone'] = False  # Reset casual tone
                             updated = True
-                        elif click == "lockerer":  # Changed from "weniger_formell" to "lockerer"
-                            preferences['casual_tone'] = True  # Set casual_tone instead of formality_level
+                        elif click == "lockerer":  # Changed from "weniger_formell"
+                            preferences['casual_tone'] = True  # Set casual tone regardless of Sie/Du
                             updated = True
                         elif click == "mehr_du_ton":
                             preferences['tone'] = 'du'
@@ -370,15 +383,22 @@ class SyncJobtimizerService:
                     text = feedback.text_feedback.lower()
                     if 'formell' in text or 'formal' in text:
                         preferences['formality_level'] = 'formal'
+                        preferences['casual_tone'] = False
                         updated = True
-                    elif 'locker' in text or 'casual' in text:
+                    elif 'locker' in text or 'entspannt' in text:
                         preferences['casual_tone'] = True
+                        updated = True
+                    elif 'sie' in text and 'anrede' in text:
+                        preferences['tone'] = 'sie'
+                        updated = True
+                    elif 'du' in text and ('anrede' in text or 'duzen' in text):
+                        preferences['tone'] = 'du'
                         updated = True
 
                 # Save updated preferences
                 if updated:
                     await db_service.update_user_preferences(user_id, preferences)
-                    logger.info(f"Updated preferences for user {user_id}")
+                    logger.info(f"Updated preferences for user {user_id}: {preferences}")
 
             self._run_async(update_preferences_async())
 
@@ -393,4 +413,3 @@ class SyncJobtimizerService:
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
-
