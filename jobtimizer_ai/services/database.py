@@ -106,33 +106,6 @@ class DatabaseService:
             logger.error(f"Benutzereinstellungen konnten nicht aktualisiert werden: {e}")
             return False
 
-    # NEW: Pay range preference methods
-    async def update_user_pay_range_preference(self, user_id: str, pay_range: str) -> bool:
-        """Gehaltsbereich-Präferenz des Benutzers aktualisieren"""
-        try:
-            result = await self.users_col.update_one(
-                {"_id": ObjectId(user_id)},
-                {"$set": {"preferences.pay_range": pay_range}}
-            )
-            return result.modified_count > 0
-        except Exception as e:
-            logger.error(f"Gehaltsbereich-Präferenz konnte nicht aktualisiert werden: {e}")
-            return False
-
-    async def get_user_pay_range_preference(self, user_id: str) -> Optional[str]:
-        """Gehaltsbereich-Präferenz des Benutzers abrufen"""
-        try:
-            user = await self.users_col.find_one(
-                {"_id": ObjectId(user_id)},
-                {"preferences.pay_range": 1}
-            )
-            if user and "preferences" in user and "pay_range" in user["preferences"]:
-                return user["preferences"]["pay_range"]
-            return None
-        except Exception as e:
-            logger.error(f"Gehaltsbereich-Präferenz konnte nicht abgerufen werden: {e}")
-            return None
-
     # ---------------- Vektorbasierte Berufssuche ----------------
     async def vector_search_occupations(self, query_embedding: List[float], limit: int = 5) -> List[Dict]:
         """
