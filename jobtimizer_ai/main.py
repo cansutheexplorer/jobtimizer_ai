@@ -186,7 +186,7 @@ def user_dashboard():
 
 
 def user_profile_settings():
-    """User profile settings interface"""
+    """Enhanced user profile settings interface with new tone options"""
     user = get_current_user()
     st.header("⚙️ Profil Einstellungen")
 
@@ -198,16 +198,24 @@ def user_profile_settings():
         col1, col2 = st.columns(2)
 
         with col1:
-            tone_options = ["professional", "casual", "friendly"]
-            current_tone = current_prefs.get("tone", "professional")
+            # Updated tone options
+            tone_options = ["sie", "du", "ohne"]
+            current_tone = current_prefs.get("tone", "sie")
             if current_tone not in tone_options:
-                current_tone = "professional"
+                current_tone = "sie"
 
             tone = st.selectbox(
-                "Tonalität",
+                "Anrede-Form",
                 options=tone_options,
                 index=tone_options.index(current_tone),
-                help="Grundtonalität der Stellenanzeigen"
+                help="Wie sollen Kandidaten angesprochen werden?"
+            )
+
+            # NEW: Separate casual tone option
+            casual_tone = st.checkbox(
+                "Lockerer Ton",
+                value=current_prefs.get("casual_tone", False),
+                help="Macht die Anzeige lockerer und entspannter (unabhängig von Sie/Du)"
             )
 
             formality_options = ["formal", "semi_formal", "casual"]
@@ -261,6 +269,7 @@ def user_profile_settings():
             try:
                 new_preferences = {
                     "tone": tone,
+                    "casual_tone": casual_tone,  # NEW field
                     "formality_level": formality_level,
                     "candidate_focus": candidate_focus,
                     "language_style": language_style
@@ -286,6 +295,17 @@ def user_profile_settings():
 
 # ----------------- Job Ad Generation -----------------
 
+def fix_job_title_formatting(title: str) -> str:
+    """Fix job title formatting - add spaces around /"""
+    if not title:
+        return title
+    
+    # Add spaces around / if they don't exist
+    import re
+    # Replace / with " / " but avoid double spaces
+    fixed_title = re.sub(r'\s*/\s*', ' / ', title)
+    return fixed_title
+
 def job_ad_interface():
     user = get_current_user()
     col1, col2 = st.columns([2, 1])
@@ -309,9 +329,9 @@ def job_ad_interface():
                 try:
                     suggestions = service.search_job_titles(job_title_input, limit=6)
                 except Exception as e:
-                    st.error(f"Suggestion search error: {e}")
+                    st.error(f"Fehler bei der Vorschlagssuche: {e}")
 
-        # Display suggestions
+        # Display suggestions with fixed formatting
         selected_suggestion = None
         if suggestions:
             st.write("**💡 Vorschläge aus ESCO-Datenbank:**")
@@ -320,30 +340,32 @@ def job_ad_interface():
             for i, suggestion in enumerate(suggestions):
                 col = cols[i % 2]
                 with col:
+                    # Fix formatting of suggestion title
+                    fixed_title = fix_job_title_formatting(suggestion['title'])
                     if st.button(
-                            f"🎯 {suggestion['title']}",
+                            f"🎯 {fixed_title}",
                             key=f"suggestion_{i}",
                             help=suggestion['description']
                     ):
                         selected_suggestion = suggestion
-                        st.session_state.selected_job_title = suggestion['title']
+                        st.session_state.selected_job_title = fixed_title
                         st.rerun()
 
         # Use selected suggestion or manual input
         final_job_title = (
                 st.session_state.get('selected_job_title') or
-                (job_title_input + " (m/w/d)" if job_title_input and not job_title_input.endswith(
-                    "(m/w/d)") else job_title_input)
+                (fix_job_title_formatting(job_title_input) + " (m/w/d)" if job_title_input and not job_title_input.endswith(
+                    "(m/w/d)") else fix_job_title_formatting(job_title_input))
         )
 
-        if final_job_title != job_title_input and final_job_title:
+        if final_job_title != fix_job_title_formatting(job_title_input) and final_job_title:
             st.info(f"✅ Gewählter Titel: **{final_job_title}**")
             if st.button("🗑️ Auswahl zurücksetzen"):
                 if 'selected_job_title' in st.session_state:
                     del st.session_state.selected_job_title
                 st.rerun()
 
-        # NEW: Seniority Level Selection (Optional)
+        # Seniority Level Selection (Optional)
         seniority_section(final_job_title)
 
         # Job ad form
@@ -374,6 +396,7 @@ def job_ad_interface():
                             additional_context=additional_context,
                             seniority_level=seniority_level,
                             seniority_years=seniority_years,
+                            # Removed pay_range parameter
                         )
 
                         result = service.generate_job_ad(request, user['_id'])
@@ -387,7 +410,7 @@ def job_ad_interface():
 
                     except Exception as e:
                         st.error(f"❌ Fehler beim Erstellen: {e}")
-                        logger.error(f"Job ad generation error: {e}")
+                        logger.error(f"Fehler bei der Stellenanzeigen-Generierung: {e}")
 
             elif generate_button:
                 st.error("❌ Bitte geben Sie einen Jobtitel ein oder wählen Sie einen Vorschlag")
@@ -400,23 +423,21 @@ def job_ad_interface():
         display_job_ad()
 
 
-# NEW: Add these helper functions to main.py
-
 def seniority_section(job_title):
-    """Display seniority level selection section"""
+    """Display seniority level selection section - now in German"""
     if not job_title:
         return
 
-    st.subheader("🎖️ Seniority Level (Optional)")
+    st.subheader("🎖️ Erfahrungsstufe (Optional)")
 
     # Import the seniority levels
     from models.job_ad import SENIORITY_LEVELS
 
     # Check if seniority selection is enabled
-    show_seniority = st.checkbox("Seniority Level hinzufügen", key="show_seniority_checkbox")
+    show_seniority = st.checkbox("Erfahrungsstufe hinzufügen", key="show_seniority_checkbox")
 
     if show_seniority:
-        st.write("**Wählen Sie das Seniority Level:**")
+        st.write("**Wählen Sie die Erfahrungsstufe:**")
 
         # Create buttons for each seniority level
         cols = st.columns(len(SENIORITY_LEVELS))
@@ -438,7 +459,7 @@ def seniority_section(job_title):
             st.success(
                 f"✅ Gewählt: **{st.session_state.selected_seniority_display}** ({st.session_state.selected_seniority_years})")
 
-            if st.button("🗑️ Seniority zurücksetzen", key="reset_seniority"):
+            if st.button("🗑️ Erfahrungsstufe zurücksetzen", key="reset_seniority"):
                 st.session_state.pop('selected_seniority_level', None)
                 st.session_state.pop('selected_seniority_years', None)
                 st.session_state.pop('selected_seniority_display', None)
@@ -473,9 +494,11 @@ def cleanup_session_state():
         'selected_seniority_level',
         'selected_seniority_years',
         'selected_seniority_display'
+        # Removed pay range keys
     ]
     for key in keys_to_remove:
         st.session_state.pop(key, None)
+
 # ----------------- Feedback -----------------
 
 def feedback_section():
@@ -488,7 +511,7 @@ def feedback_section():
             apply_feedback(["mehr_benefits"], None)
     with col2:
         if st.button("😊 Lockerer"):
-            apply_feedback(["weniger_formell"], None)
+            apply_feedback(["lockerer"], None)  # Changed to 'lockerer'
         if st.button("🏢 Mehr Kultur"):
             apply_feedback(["mehr_unternehmenskultur"], None)
 
@@ -515,211 +538,6 @@ def apply_feedback(button_clicks, text_feedback):
         st.error(f"❌ Fehler beim Verfeinern: {e}")
 
 
-def job_ad_interface():
-    user = get_current_user()
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.header("🎯 Stellenanzeige erstellen")
-
-        # Job title input with suggestions
-        st.subheader("Jobtitel eingeben")
-
-        job_title_input = st.text_input(
-            "Jobtitel*",
-            placeholder="Z.B. Software Engineer, Marketing Manager, ...",
-            help="Beginnen Sie zu tippen für Vorschläge aus der ESCO-Datenbank"
-        )
-
-        # Show suggestions when user types
-        suggestions = []
-        if job_title_input and len(job_title_input) >= 2:
-            with st.spinner("🔍 Suche Vorschläge..."):
-                try:
-                    suggestions = service.search_job_titles(job_title_input, limit=6)
-                except Exception as e:
-                    st.error(f"Fehler bei der Vorschlagssuche: {e}")
-
-        # Display suggestions
-        selected_suggestion = None
-        if suggestions:
-            st.write("**💡 Vorschläge aus ESCO-Datenbank:**")
-
-            cols = st.columns(2)
-            for i, suggestion in enumerate(suggestions):
-                col = cols[i % 2]
-                with col:
-                    if st.button(
-                            f"🎯 {suggestion['title']}",
-                            key=f"suggestion_{i}",
-                            help=suggestion['description']
-                    ):
-                        selected_suggestion = suggestion
-                        st.session_state.selected_job_title = suggestion['title']
-                        st.rerun()
-
-        # Use selected suggestion or manual input
-        final_job_title = (
-                st.session_state.get('selected_job_title') or
-                (job_title_input + " (m/w/d)" if job_title_input and not job_title_input.endswith(
-                    "(m/w/d)") else job_title_input)
-        )
-
-        if final_job_title != job_title_input and final_job_title:
-            st.info(f"✅ Gewählter Titel: **{final_job_title}**")
-            if st.button("🗑️ Auswahl zurücksetzen"):
-                if 'selected_job_title' in st.session_state:
-                    del st.session_state.selected_job_title
-                st.rerun()
-
-        # Seniority Level Selection (Optional)
-        seniority_section(final_job_title)
-
-        # NEW: Pay Range Selection (Optional)
-        pay_range_section(user['_id'])
-
-        # Job ad form
-        with st.form("job_ad_form"):
-            # Get the final title with seniority if selected
-            display_title = get_final_job_title_with_seniority(final_job_title)
-
-            st.text_input("Finaler Jobtitel", value=display_title or "", disabled=True)
-
-            # Show selected pay range if any
-            selected_pay_range = st.session_state.get('selected_pay_range_display')
-            if selected_pay_range:
-                st.text_input("Gewählter Gehaltsbereich", value=selected_pay_range, disabled=True)
-
-            additional_context = st.text_area(
-                "Zusätzliche Informationen",
-                placeholder="Besondere Anforderungen, Benefits, Arbeitsweise..."
-            )
-
-            generate_button = st.form_submit_button("✨ Stellenanzeige Generieren")
-
-            if generate_button and final_job_title:
-                with st.spinner("🤖 KI erstellt Ihre Stellenanzeige..."):
-                    try:
-                        # Remove (m/w/d) for ESCO search
-                        search_title = final_job_title.replace(" (m/w/d)", "").strip()
-
-                        # Get seniority info from session state
-                        seniority_level = st.session_state.get('selected_seniority_level')
-                        seniority_years = st.session_state.get('selected_seniority_years')
-
-                        # Get pay range info from session state
-                        pay_range = st.session_state.get('selected_pay_range')
-
-                        request = JobAdRequest(
-                            job_title=search_title,
-                            additional_context=additional_context,
-                            seniority_level=seniority_level,
-                            seniority_years=seniority_years,
-                            pay_range=pay_range
-                        )
-
-                        result = service.generate_job_ad(request, user['_id'])
-                        st.session_state.current_ad = result
-
-                        # Clean up session state
-                        cleanup_session_state()
-
-                        st.success("✅ Stellenanzeige erstellt!")
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(f"❌ Fehler beim Erstellen: {e}")
-                        logger.error(f"Fehler bei der Stellenanzeigen-Generierung: {e}")
-
-            elif generate_button:
-                st.error("❌ Bitte geben Sie einen Jobtitel ein oder wählen Sie einen Vorschlag")
-
-    with col2:
-        if st.session_state.current_ad:
-            feedback_section()
-
-    if st.session_state.current_ad:
-        display_job_ad()
-
-def pay_range_section(user_id: str):
-    """Gehaltsbereich-Auswahl anzeigen"""
-    st.subheader("💰 Gehaltsbereich hinzufügen")
-
-    # Import the pay ranges
-    from models.job_ad import PAY_RANGES
-
-    # Check if pay range selection is enabled
-    show_pay_range = st.checkbox("Gehaltsbereich hinzufügen", key="show_pay_range_checkbox")
-
-    if show_pay_range:
-        st.write("**Wählen Sie eine Gehaltsbeschreibung:**")
-
-        # Create buttons for each pay range in a 2x2 grid
-        cols = st.columns(2)
-
-        for i, pay_range in enumerate(PAY_RANGES):
-            col = cols[i % 2]
-            with col:
-                if st.button(
-                        f"💰 **{pay_range.display_name}**",
-                        key=f"pay_range_{pay_range.key}",  # Changed from .level to .key
-                        help=pay_range.description
-                ):
-                    st.session_state.selected_pay_range = pay_range.key  # Changed from .level to .key
-                    st.session_state.selected_pay_range_display = pay_range.display_name
-
-                    # Save to user preferences in database
-                    try:
-                        import asyncio
-                        from services.database import db_service
-                        asyncio.create_task(
-                            db_service.update_user_pay_range_preference(user_id, pay_range.key)  # Changed from .level to .key
-                        )
-                        st.success(f"✅ Als Standard gespeichert: {pay_range.display_name}")
-                    except Exception as e:
-                        logger.warning(f"Gehaltsbereich-Präferenz konnte nicht gespeichert werden: {e}")
-
-                    st.rerun()
-
-        # Show selected pay range
-        if 'selected_pay_range_display' in st.session_state:
-            st.success(f"✅ Gewählt: **{st.session_state.selected_pay_range_display}**")
-
-            if st.button("🗑️ Gehaltsbereich zurücksetzen", key="reset_pay_range"):
-                st.session_state.pop('selected_pay_range', None)
-                st.session_state.pop('selected_pay_range_display', None)
-                st.rerun()
-
-        # Load user's previous preference
-        elif user_id:
-            try:
-                import asyncio
-                from services.database import db_service
-                # This is a simplified approach - you might want to load this once at startup
-                if 'user_pay_range_loaded' not in st.session_state:
-                    st.session_state.user_pay_range_loaded = True
-                    # You could show a message here that user's preferred range is available
-                    st.info("💡 Tipp: Ihre zuletzt gewählte Einstellung wird automatisch geladen")
-            except Exception:
-                pass
-    else:
-        # Clear pay range selection if checkbox is unchecked
-        if 'selected_pay_range' in st.session_state:
-            st.session_state.pop('selected_pay_range', None)
-            st.session_state.pop('selected_pay_range_display', None)
-
-def cleanup_session_state():
-    """Session State nach der Stellenanzeigen-Generierung aufräumen"""
-    keys_to_remove = [
-        'selected_job_title',
-        'selected_seniority_level',
-        'selected_seniority_years',
-        'selected_seniority_display',
-        'selected_pay_range',
-        'selected_pay_range_display'
-    ]
-    for key in keys_to_remove:
-        st.session_state.pop(key, None)
 # ----------------- Display Job Ad -----------------
 
 def display_job_ad():
@@ -729,7 +547,7 @@ def display_job_ad():
     with col1:
         st.metric("🏢 Unternehmen", user['company_info']['company_name'])
     with col2:
-        # Changed from ['name'] to .name since esco_data is now a Pydantic model
+        # Don't show seniority info next to "Ihr Profil" anymore
         st.metric("🎯 Position", st.session_state.current_ad.esco_data.name)
     with col3:
         st.metric("⏰ Erstellt", st.session_state.current_ad.generation_timestamp.strftime("%H:%M"))
