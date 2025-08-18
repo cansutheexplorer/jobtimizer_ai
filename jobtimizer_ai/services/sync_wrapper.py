@@ -187,7 +187,7 @@ class SyncJobtimizerService:
             return [{"name": "couldn't found", "esco_code": "", "description": "", "score": 0.0}]
 
     def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
-        """Generate job ad - REMOVED pay_range handling"""
+        """Stellenanzeige mit Vektorsuche für ESCO-Matching generieren"""
         try:
             async def generate_async():
                 # Get user data
@@ -218,9 +218,7 @@ class SyncJobtimizerService:
                     if seniority_obj:
                         final_job_title = f"{seniority_obj.display_name} {request.job_title}"
 
-                # REMOVED: pay_range_context handling - no longer needed
-
-                # Add seniority context only
+                # Add seniority context - REMOVED pay_range_context
                 seniority_context = ""
                 if request.seniority_level and request.seniority_years:
                     seniority_context = f"Seniority Level: {request.seniority_level} ({request.seniority_years} Erfahrung). "
@@ -336,7 +334,7 @@ class SyncJobtimizerService:
             raise
 
     def _update_user_preferences_from_feedback(self, user_id: str, feedback: FeedbackRequest):
-        """Update user preferences based on feedback patterns - UPDATED for new feedback options"""
+        """Update user preferences based on feedback patterns"""
         try:
             async def update_preferences_async():
                 user = await db_service.get_user_by_id(user_id)
@@ -346,14 +344,14 @@ class SyncJobtimizerService:
                 preferences = user.get('preferences', {})
                 updated = False
 
-                # Analyze button clicks
+                # Analyze button clicks - Updated for new feedback options
                 if feedback.button_clicks:
                     for click in feedback.button_clicks:
                         if click == "mehr_formell":
                             preferences['formality_level'] = 'formal'
                             updated = True
-                        elif click == "lockerer":  # CHANGED: was "weniger_formell"
-                            preferences['casual_tone'] = True  # NEW: Set casual_tone flag
+                        elif click == "lockerer":  # Changed from "weniger_formell" to "lockerer"
+                            preferences['casual_tone'] = True  # Set casual_tone instead of formality_level
                             updated = True
                         elif click == "mehr_du_ton":
                             preferences['tone'] = 'du'
@@ -374,7 +372,7 @@ class SyncJobtimizerService:
                         preferences['formality_level'] = 'formal'
                         updated = True
                     elif 'locker' in text or 'casual' in text:
-                        preferences['casual_tone'] = True  # NEW: Set casual_tone flag
+                        preferences['casual_tone'] = True
                         updated = True
 
                 # Save updated preferences
