@@ -257,17 +257,25 @@ def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
                 final_job_title=final_job_title
             )
 
-            # Normalize ESCO data properly
-            normalized_esco_data = openai_service._normalize_esco_data(raw_esco_data)
-            
-            # Create ESCOData object first, then create JobAdResponse
+            # Create ESCOData object directly from raw data
             from models import ESCOData
-            esco_data_obj = ESCOData(**normalized_esco_data)
+            
+            # Ensure we have all required fields with defaults
+            esco_data_obj = ESCOData(
+                esco_code=raw_esco_data.get('esco_code', ''),
+                name=raw_esco_data.get('name', 'Unknown'),
+                description=raw_esco_data.get('description', ''),
+                essential_skills=raw_esco_data.get('essential_skills', []),
+                optional_skills=raw_esco_data.get('optional_skills', []),
+                alternative_labels=raw_esco_data.get('alternative_labels', []),
+                regulatory_info=raw_esco_data.get('regulatory_info'),
+                url=raw_esco_data.get('url')
+            )
 
-            # Create JobAdResponse with the ESCOData object
+            # Create JobAdResponse
             return JobAdResponse(
                 job_ad=job_ad,
-                esco_data=esco_data_obj,  # This should be the ESCOData object
+                esco_data=esco_data_obj,
                 generation_timestamp=datetime.utcnow(),
                 user_id=user_id
             )
@@ -426,6 +434,7 @@ def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
+
 
 
 
