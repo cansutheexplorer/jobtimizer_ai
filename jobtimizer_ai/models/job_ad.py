@@ -31,17 +31,13 @@ class ESCOData(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-class JobAdResponse(BaseModel):
-    """Job ad generation response model"""
-    job_ad: str  # The generated job advertisement text
-    esco_data: ESCOData  # The matched ESCO occupation data - this should accept ESCOData object
-    generation_timestamp: datetime = Field(default_factory=datetime.utcnow)
-    user_id: str
+return JobAdResponse.model_validate({
+    "job_ad": job_ad,
+    "esco_data": esco_data_obj.model_dump(),  # pass as dict
+    "generation_timestamp": datetime.utcnow(),
+    "user_id": user_id
+})
 
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class FeedbackRequest(BaseModel):
@@ -121,5 +117,6 @@ class User(BaseModel):
 
 # Alias for readability
 EscoOccupation = ESCOData
+
 
 
