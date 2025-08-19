@@ -319,18 +319,28 @@ def fix_job_title_formatting(title: str) -> str:
     """Fix job title formatting - no spaces around / in (m/w/d)"""
     if not title:
         return title
-
+    
     import re
-    # Temporarily protect (m/w/d) from space addition
-    protected = re.sub(r'\(m/w/d\)', '__MWD__', title)
     
-    # Add spaces around remaining slashes
-    fixed = re.sub(r'\s*/\s*', ' / ', protected)
+    # First, temporarily replace (m/w/d) patterns to protect them
+    protected = re.sub(r'\(m\s*/\s*w\s*/\s*d\)', '(m/w/d)', title, flags=re.IGNORECASE)
     
-    # Restore (m/w/d) without spaces
-    fixed = fixed.replace('__MWD__', '(m/w/d)')
+    # Now add spaces around other slashes (but not the ones we just protected)
+    # Only add spaces to slashes that are NOT within parentheses containing m, w, d
+    parts = []
+    i = 0
+    while i < len(protected):
+        if protected[i:i+7] == '(m/w/d)':
+            parts.append('(m/w/d)')
+            i += 7
+        elif protected[i] == '/':
+            parts.append(' / ')
+            i += 1
+        else:
+            parts.append(protected[i])
+            i += 1
     
-    return fixed
+    return ''.join(parts)
 
 
 def job_ad_interface():
@@ -353,14 +363,23 @@ def job_ad_interface():
             key="job_title_input"
         )
 
-        # Only search if query changed and is long enough
+        # Only search if query changed and is long enough - with debouncing
         suggestions = []
-        if job_title_input and len(job_title_input) >= 2:
+        if (job_title_input and 
+            len(job_title_input) >= 2 and 
+            job_title_input != st.session_state.get('last_search_query', '')):
+            
             try:
-                suggestions = service.search_job_titles(job_title_input, limit=6)
+                with st.spinner("Suche Vorschläge..."):
+                    suggestions = service.search_job_titles(job_title_input, limit=6)
+                    st.session_state.last_search_query = job_title_input
+                    st.session_state.cached_suggestions = suggestions
             except Exception as e:
                 st.error(f"Fehler bei der Vorschlagssuche: {e}")
                 suggestions = []
+        elif job_title_input == st.session_state.get('last_search_query', ''):
+            # Use cached results
+            suggestions = st.session_state.get('cached_suggestions', [])
 
         # Display suggestions with fixed formatting
         selected_suggestion = None
@@ -373,16 +392,37 @@ def job_ad_interface():
                 with col:
                     # Fix formatting of suggestion title
                     fixed_title = fix_job_title_formatting(suggestion['title'])
+                    button_key = f"suggestion_{i}_{hash(fixed_title)}"  # More unique key
+                    
                     if st.button(
                             f"🎯 {fixed_title}",
-                            key=f"suggestion_{i}",
+                            key=button_key,
                             help=suggestion['description']
                     ):
-                        selected_suggestion = suggestion
                         st.session_state.selected_job_title = fixed_title
+                        # Clear search cache to avoid confusion
+                        st.session_state.pop('last_search_query', None)
+                        st.session_state.pop('cached_suggestions', None)
                         st.rerun()
 
-        # Clean only the base title (without suffix), then append (m/w/d) if needed
+        # Process the final job title
+        if st.session_state.get('selected_job_title'):
+            final_job_title = st.session_state.selected_job_title
+        else:
+            # Clean the input and add (m/w/d) if needed
+            clean_input = fix_job_title_formatting(job_title_input) if job_title_input else ""
+            if clean_input and not clean_input.endswith("(m/w/d)"):
+                final_job_title = f"{clean_input}(m/w/d)"  # No space before (m/w/d)
+            else:
+                final_job_title = clean_input
+
+        if final_job_title and final_job_title != job_title_input:
+            st.info(f"✅ Gewählter Titel: **{final_job_title}**")
+            if st.button("🗑️ Auswahl zurücksetzen"):
+                st.session_state.pop('selected_job_title', None)
+                st.session_state.pop('last_search_query', None) 
+                st.session_state.pop('cached_suggestions', None)
+                st.rerun()
         base_title = fix_job_title_formatting(job_title_input)
 
         final_job_title = (
@@ -577,9 +617,17 @@ def display_job_ad():
     st.header("📄 Ihre Stellenanzeige")
     user = get_current_user()
     
-    # Get Germany timezone
+    # Get Germany timezone - fixed
     germany_tz = pytz.timezone('Europe/Berlin')
-    created_time = st.session_state.current_ad.generation_timestamp.replace(tzinfo=pytz.UTC).astimezone(germany_tz)
+    
+    # Ensure the timestamp is timezone-aware
+    timestamp = st.session_state.current_ad.generation_timestamp
+    if timestamp.tzinfo is None:
+        # If naive datetime, assume it's UTC
+        timestamp = timestamp.replace(tzinfo=pytz.UTC)
+    
+    # Convert to Germany time
+    created_time = timestamp.astimezone(germany_tz)
     
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -587,8 +635,7 @@ def display_job_ad():
     with col2:
         st.metric("🎯 Position", st.session_state.current_ad.esco_data.name)
     with col3:
-        st.metric("⏰ Erstellt", created_time.strftime("%H:%M"))
-
+        st.metric("⏰ Erstellt", created_time.strftime("%d.%m.%Y %H:%M")) 
     st.markdown("---")
     st.markdown(st.session_state.current_ad.job_ad)
     st.markdown("---")
@@ -620,9 +667,22 @@ def display_job_ad():
         file_name=f"stellenanzeige_{job_name_safe}.md",
         mime="text/markdown"
     )
-
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'current_ad' not in st.session_state:
+        st.session_state.current_ad = None
+    if 'selected_job_title' not in st.session_state:
+        st.session_state.selected_job_title = None
+    if 'show_registration' not in st.session_state:
+        st.session_state.show_registration = False
+    # Add caching for suggestions
+    if 'last_search_query' not in st.session_state:
+        st.session_state.last_search_query = ""
+    if 'cached_suggestions' not in st.session_state:
+        st.session_state.cached_suggestions = []
 
 # ----------------- Run -----------------
 
 if __name__ == "__main__":
     main()
+
