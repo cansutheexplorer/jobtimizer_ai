@@ -425,25 +425,13 @@ def job_ad_interface():
             else:
                 final_job_title = clean_input
 
+        # Show selected title with unique key for reset button
         if final_job_title and final_job_title != job_title_input:
             st.info(f"✅ Gewählter Titel: **{final_job_title}**")
-            if st.button("🗑️ Auswahl zurücksetzen"):
+            if st.button("🗑️ Auswahl zurücksetzen", key="reset_job_title_selection"):
                 st.session_state.pop('selected_job_title', None)
                 st.session_state.pop('last_search_query', None) 
                 st.session_state.pop('cached_suggestions', None)
-                st.rerun()
-        base_title = fix_job_title_formatting(job_title_input)
-
-        final_job_title = (
-                st.session_state.get('selected_job_title')
-                or (base_title + "(m/w/d)" if job_title_input and not job_title_input.endswith("(m/w/d)") else base_title)
-        )
-
-        if final_job_title != fix_job_title_formatting(job_title_input) and final_job_title:
-            st.info(f"✅ Gewählter Titel: **{final_job_title}**")
-            if st.button("🗑️ Auswahl zurücksetzen"):
-                if 'selected_job_title' in st.session_state:
-                    del st.session_state.selected_job_title
                 st.rerun()
 
         # Seniority Level Selection (Optional)
@@ -526,7 +514,7 @@ def seniority_section(job_title):
             with cols[i]:
                 if st.button(
                         f"**{seniority.display_name}**\n({seniority.years})",
-                        key=f"seniority_{seniority.level}",
+                        key=f"seniority_btn_{seniority.level}_{i}",
                         help=f"Fügt '{seniority.display_name}' vor dem Jobtitel hinzu"
                 ):
                     st.session_state.selected_seniority_level = seniority.level
@@ -539,7 +527,7 @@ def seniority_section(job_title):
             st.success(
                 f"✅ Gewählt: **{st.session_state.selected_seniority_display}** ({st.session_state.selected_seniority_years})")
 
-            if st.button("🗑️ Erfahrungsstufe zurücksetzen", key="reset_seniority"):
+            if st.button("🗑️ Erfahrungsstufe zurücksetzen", key="reset_seniority_selection"):
                 st.session_state.pop('selected_seniority_level', None)
                 st.session_state.pop('selected_seniority_years', None)
                 st.session_state.pop('selected_seniority_display', None)
@@ -585,18 +573,18 @@ def feedback_section():
     st.header("🔧 Schnelle Anpassungen")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("📈 Formeller"):
+        if st.button("📈 Formeller", key="feedback_more_formal"):
             apply_feedback(["mehr_formell"], None)
-        if st.button("🎯 Mehr Benefits"):
+        if st.button("🎯 Mehr Benefits", key="feedback_more_benefits"):
             apply_feedback(["mehr_benefits"], None)
     with col2:
-        if st.button("😊 Lockerer"):
+        if st.button("😊 Lockerer", key="feedback_more_casual"):
             apply_feedback(["lockerer"], None)
-        if st.button("🏢 Mehr Kultur"):
+        if st.button("🏢 Mehr Kultur", key="feedback_more_culture"):
             apply_feedback(["mehr_unternehmenskultur"], None)
 
-    custom_feedback = st.text_area("💬 Individuelle Anpassungen")
-    if st.button("🔄 Anpassung anwenden") and custom_feedback:
+    custom_feedback = st.text_area("💬 Individuelle Anpassungen", key="custom_feedback_text")
+    if st.button("🔄 Anpassung anwenden", key="apply_custom_feedback") and custom_feedback:
         apply_feedback(None, custom_feedback)
 
 
@@ -644,14 +632,15 @@ def display_job_ad():
     with col2:
         st.metric("🎯 Position", st.session_state.current_ad.esco_data.name)
     with col3:
-        st.metric("⏰ Erstellt", created_time.strftime("%d.%m.%Y %H:%M")) 
+        st.metric("⏰ Erstellt", created_time.strftime("%d.%m.%Y %H:%M"))  # German format
+
     st.markdown("---")
     st.markdown(st.session_state.current_ad.job_ad)
     st.markdown("---")
 
-    edited_ad = st.text_area("📝 Bearbeiten", value=st.session_state.current_ad.job_ad, height=400)
+    edited_ad = st.text_area("📝 Bearbeiten", value=st.session_state.current_ad.job_ad, height=400, key="edit_job_ad")
     if edited_ad != st.session_state.current_ad.job_ad:
-        if st.button("💾 Änderungen speichern"):
+        if st.button("💾 Änderungen speichern", key="save_manual_changes"):
             try:
                 feedback_request = FeedbackRequest(
                     feedback_type="manual_edit",
@@ -674,7 +663,8 @@ def display_job_ad():
         label="📥 Als Markdown herunterladen",
         data=st.session_state.current_ad.job_ad,
         file_name=f"stellenanzeige_{job_name_safe}.md",
-        mime="text/markdown"
+        mime="text/markdown",
+        key="download_job_ad"
     )
 def initialize_session_state():
     """Initialize session state variables"""
@@ -694,5 +684,3 @@ def initialize_session_state():
 
 if __name__ == "__main__":
     main()
-
-
