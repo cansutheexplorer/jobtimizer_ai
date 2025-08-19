@@ -257,29 +257,25 @@ class SyncJobtimizerService:
                 final_job_title=final_job_title
             )
 
-            # Create ESCOData object with proper validation
-            from models import ESCOData
-            
-            # Ensure we have all required fields with proper defaults
-            esco_data_obj = ESCOData(
-                esco_code=str(raw_esco_data.get('esco_code', '')),
-                name=str(raw_esco_data.get('name', 'Unknown')),
-                description=str(raw_esco_data.get('description', '')),
-                essential_skills=raw_esco_data.get('essential_skills', []) or [],
-                optional_skills=raw_esco_data.get('optional_skills', []) or [],
-                alternative_labels=raw_esco_data.get('alternative_labels', []) or [],
-                regulatory_info=raw_esco_data.get('regulatory_info'),
-                url=raw_esco_data.get('url')
-            )
+           from models import ESCOData
+normalized_esco_data = {
+    'esco_code': raw_esco_data.get('esco_code', ''),
+    'name': raw_esco_data.get('name', 'Unknown'),
+    'description': raw_esco_data.get('description', ''),
+    'essential_skills': raw_esco_data.get('essential_skills', []),
+    'optional_skills': raw_esco_data.get('optional_skills', []),
+    'alternative_labels': raw_esco_data.get('alternative_labels', []),
+    'regulatory_info': raw_esco_data.get('regulatory_info'),
+    'url': raw_esco_data.get('url')
+}
 
-            # Create JobAdResponse
-            return JobAdResponse(
-                job_ad=job_ad,
-                esco_data=esco_data_obj,
-                generation_timestamp=datetime.utcnow(),
-                user_id=user_id
-            )
-
+# Create JobAdResponse - it will create the ESCOData object internally
+return JobAdResponse(
+    job_ad=job_ad,
+    esco_data=normalized_esco_data,  # Pass dict, not ESCOData object
+    generation_timestamp=datetime.utcnow(),
+    user_id=user_id
+)
         response = self._run_async(generate_async())
         logger.info(f"Stellenanzeige generiert für Benutzer {user_id}, ESCO-Match: {response.esco_data.name}")
         return response
@@ -434,4 +430,5 @@ class SyncJobtimizerService:
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
+
 
