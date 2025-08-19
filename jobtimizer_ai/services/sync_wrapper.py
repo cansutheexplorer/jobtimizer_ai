@@ -209,7 +209,7 @@ class SyncJobtimizerService:
             logger.error(f"Search error: {e}")
             return [{"name": "couldn't found", "esco_code": "", "description": "", "score": 0.0}]
 
-    def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
+def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
     """Generate job ad with enhanced randomization and formatting"""
     try:
         async def generate_async():
@@ -257,25 +257,34 @@ class SyncJobtimizerService:
                 final_job_title=final_job_title
             )
 
-           from models import ESCOData
-normalized_esco_data = {
-    'esco_code': raw_esco_data.get('esco_code', ''),
-    'name': raw_esco_data.get('name', 'Unknown'),
-    'description': raw_esco_data.get('description', ''),
-    'essential_skills': raw_esco_data.get('essential_skills', []),
-    'optional_skills': raw_esco_data.get('optional_skills', []),
-    'alternative_labels': raw_esco_data.get('alternative_labels', []),
-    'regulatory_info': raw_esco_data.get('regulatory_info'),
-    'url': raw_esco_data.get('url')
-}
+            # Helper function to extract skills
+            def extract_skills(skills_array):
+                """Extract skill names from MongoDB skill objects"""
+                if not skills_array:
+                    return []
+                return [skill.get('name', str(skill)) if isinstance(skill, dict) else str(skill) 
+                        for skill in skills_array]
 
-# Create JobAdResponse - it will create the ESCOData object internally
-return JobAdResponse(
-    job_ad=job_ad,
-    esco_data=normalized_esco_data,  # Pass dict, not ESCOData object
-    generation_timestamp=datetime.utcnow(),
-    user_id=user_id
-)
+            # Prepare normalized data dict for JobAdResponse
+            normalized_esco_data = {
+                'esco_code': raw_esco_data.get('code') or raw_esco_data.get('esco_code', ''),
+                'name': raw_esco_data.get('name', 'Unknown'),
+                'description': raw_esco_data.get('description', ''),
+                'essential_skills': extract_skills(raw_esco_data.get('essential_skills', [])),
+                'optional_skills': extract_skills(raw_esco_data.get('optional_skills', [])),
+                'alternative_labels': raw_esco_data.get('alternative_labels', []),
+                'regulatory_info': raw_esco_data.get('regulatory_info'),
+                'url': raw_esco_data.get('url')
+            }
+
+            # Create JobAdResponse - pass dict, not ESCOData object
+            return JobAdResponse(
+                job_ad=job_ad,
+                esco_data=normalized_esco_data,
+                generation_timestamp=datetime.utcnow(),
+                user_id=user_id
+            )
+
         response = self._run_async(generate_async())
         logger.info(f"Stellenanzeige generiert für Benutzer {user_id}, ESCO-Match: {response.esco_data.name}")
         return response
@@ -430,5 +439,6 @@ return JobAdResponse(
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
+
 
 
