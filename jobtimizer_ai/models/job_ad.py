@@ -31,13 +31,18 @@ class ESCOData(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-return JobAdResponse.model_validate({
-    "job_ad": job_ad,
-    "esco_data": esco_data_obj.model_dump(),  # pass as dict
-    "generation_timestamp": datetime.utcnow(),
-    "user_id": user_id
-})
 
+class JobAdResponse(BaseModel):
+    """Job ad generation response model"""
+    job_ad: str  # The generated job advertisement text
+    esco_data: ESCOData  # The matched ESCO occupation data
+    generation_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    user_id: str
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 
 class FeedbackRequest(BaseModel):
@@ -71,6 +76,7 @@ class SeniorityLevel(BaseModel):
     years: str
     display_name: str
 
+
 SENIORITY_LEVELS = [
     SeniorityLevel(level="entry", years="0-1 Jahre", display_name="Entry Level"),
     SeniorityLevel(level="junior", years="1-5 Jahre", display_name="Junior"),
@@ -78,12 +84,14 @@ SENIORITY_LEVELS = [
     SeniorityLevel(level="senior", years="10+ Jahre", display_name="Senior")
 ]
 
+
 class JobAdRequest(BaseModel):
     """Job ad generation request model - removed pay_range"""
     job_title: str = Field(..., min_length=1, max_length=150)
     additional_context: Optional[str] = Field(None, max_length=2000)
     seniority_level: Optional[str] = Field(None, help="Optional seniority level to add to job title")
     seniority_years: Optional[str] = Field(None, help="Years of experience for the seniority level")
+
 
 class UserPreferences(BaseModel):
     """Enhanced user preferences for job ad generation"""
@@ -117,6 +125,3 @@ class User(BaseModel):
 
 # Alias for readability
 EscoOccupation = ESCOData
-
-
-
