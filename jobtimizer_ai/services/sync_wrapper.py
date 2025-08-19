@@ -209,7 +209,7 @@ class SyncJobtimizerService:
             logger.error(f"Search error: {e}")
             return [{"name": "couldn't found", "esco_code": "", "description": "", "score": 0.0}]
 
-    def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
+def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
     """Generate job ad with enhanced randomization and formatting"""
     try:
         async def generate_async():
@@ -434,4 +434,5 @@ class SyncJobtimizerService:
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
+
 
