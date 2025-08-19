@@ -84,7 +84,7 @@ SENIORITY_LEVELS = [
 
 class JobAdRequest(BaseModel):
     """Job ad generation request model - removed pay_range"""
-    job_title: str = Field(..., min_length=1, max_length=80)
+    job_title: str = Field(..., min_length=1, max_length=150)
     additional_context: Optional[str] = Field(None, max_length=2000)
     seniority_level: Optional[str] = Field(None, help="Optional seniority level to add to job title")
     seniority_years: Optional[str] = Field(None, help="Years of experience for the seniority level")
@@ -121,4 +121,5 @@ class User(BaseModel):
 
 # Alias for readability
 EscoOccupation = ESCOData
+
 
