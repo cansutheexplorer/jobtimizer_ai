@@ -322,14 +322,29 @@ def job_ad_interface():
             help="Beginnen Sie zu tippen für Vorschläge aus der ESCO-Datenbank"
         )
 
-        # Show suggestions when user types
+        # Initialize session state for caching suggestions
+        if 'cached_suggestions' not in st.session_state:
+            st.session_state.cached_suggestions = {}
+        if 'last_search_query' not in st.session_state:
+            st.session_state.last_search_query = ""
+
+        # Only search if query changed and is long enough
         suggestions = []
         if job_title_input and len(job_title_input) >= 2:
-            with st.spinner("🔍 Suche Vorschläge..."):
-                try:
-                    suggestions = service.search_job_titles(job_title_input, limit=6)
-                except Exception as e:
-                    st.error(f"Fehler bei der Vorschlagssuche: {e}")
+            # Check if we need to search (query changed)
+            if job_title_input != st.session_state.last_search_query:
+                with st.spinner("🔍 Suche Vorschläge..."):
+                    try:
+                        suggestions = service.search_job_titles(job_title_input, limit=6)
+                        # Cache the results
+                        st.session_state.cached_suggestions[job_title_input] = suggestions
+                        st.session_state.last_search_query = job_title_input
+                    except Exception as e:
+                        st.error(f"Fehler bei der Vorschlagssuche: {e}")
+                        suggestions = []
+            else:
+                # Use cached results
+                suggestions = st.session_state.cached_suggestions.get(job_title_input, [])
 
         # Display suggestions with fixed formatting
         selected_suggestion = None
@@ -349,6 +364,8 @@ def job_ad_interface():
                     ):
                         selected_suggestion = suggestion
                         st.session_state.selected_job_title = fixed_title
+                        # Clear the input to avoid re-searching
+                        st.session_state.last_search_query = ""
                         st.rerun()
 
         # Clean only the base title (without suffix), then append (m/w/d) if needed
@@ -388,8 +405,6 @@ def job_ad_interface():
                 with st.spinner("🤖 KI erstellt Ihre Stellenanzeige..."):
                     try:
                         search_title = final_job_title.replace(" (m/w/d)", "").strip()
-
-                        # Get seniority info from session state
                         seniority_level = st.session_state.get('selected_seniority_level')
                         seniority_years = st.session_state.get('selected_seniority_years')
 
@@ -398,7 +413,6 @@ def job_ad_interface():
                             additional_context=additional_context,
                             seniority_level=seniority_level,
                             seniority_years=seniority_years,
-                            # Removed pay_range parameter
                         )
 
                         result = service.generate_job_ad(request, user['_id'])
@@ -589,4 +603,5 @@ def display_job_ad():
 
 if __name__ == "__main__":
     main()
+
 
