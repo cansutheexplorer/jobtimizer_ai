@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 import threading
 import random
-import re
+
 from services.database import db_service
 from services.openai_service import openai_service
 from models import JobAdRequest, JobAdResponse, FeedbackRequest
@@ -38,16 +38,25 @@ class SyncJobtimizerService:
             raise
 
     def _fix_job_title_formatting(self, title: str) -> str:
-    """Fix job title formatting - ensure NO spaces around / in (m/w/d)"""
-    if not title:
-        return title
-    normalized = re.sub(r'\(\s*m\s*/\s*w\s*/\s*d\s*\)', '(m/w/d)', title, flags=re.IGNORECASE)
-    parts = re.split(r'(\(m/w/d\))', normalized, flags=re.IGNORECASE)
-    for i in range(len(parts)):
-        if not re.match(r'\(m/w/d\)', parts[i], flags=re.IGNORECASE):
-            parts[i] = re.sub(r'\s*/\s*', ' / ', parts[i])
-    
-    return ''.join(parts)
+        """Fix job title formatting - ensure NO spaces around / in (m/w/d)"""
+        if not title:
+            return title
+
+        import re
+        
+        # First normalize (m/w/d) - remove any spaces within it
+        normalized = re.sub(r'\(\s*m\s*/\s*w\s*/\s*d\s*\)', '(m/w/d)', title, flags=re.IGNORECASE)
+        
+        # Then handle other slashes - add spaces around slashes that are NOT in (m/w/d)
+        # Split by (m/w/d) to process parts separately
+        parts = re.split(r'(\(m/w/d\))', normalized, flags=re.IGNORECASE)
+        
+        for i in range(len(parts)):
+            if not re.match(r'\(m/w/d\)', parts[i], flags=re.IGNORECASE):
+                # This part doesn't contain (m/w/d), so we can add spaces around slashes
+                parts[i] = re.sub(r'\s*/\s*', ' / ', parts[i])
+        
+        return ''.join(parts)
 
     def search_job_titles(self, query: str, limit: int = 8) -> List[Dict]:
         """Search job titles for autocomplete suggestions using vector embeddings"""
@@ -71,7 +80,7 @@ class SyncJobtimizerService:
                     name = occ.get('name', 'Unknown')
                     # Fix formatting and add (m/w/d)
                     formatted_name = self._fix_job_title_formatting(name)
-                    name_with_suffix = f"{formatted_name} (m/w/d)"
+                    name_with_suffix = f"{formatted_name}(m/w/d)"  # No space before (m/w/d)
 
                     suggestions.append({
                         'title': name_with_suffix,
@@ -415,4 +424,3 @@ class SyncJobtimizerService:
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
-
