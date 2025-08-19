@@ -34,7 +34,7 @@ class ESCOData(BaseModel):
 class JobAdResponse(BaseModel):
     """Job ad generation response model"""
     job_ad: str  # The generated job advertisement text
-    esco_data: ESCOData  # The matched ESCO occupation data
+    esco_data: ESCOData  # The matched ESCO occupation data - this should accept ESCOData object
     generation_timestamp: datetime = Field(default_factory=datetime.utcnow)
     user_id: str
 
@@ -121,3 +121,4 @@ class User(BaseModel):
 
 # Alias for readability
 EscoOccupation = ESCOData
+
