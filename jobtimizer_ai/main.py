@@ -1,422 +1,630 @@
-import asyncio
-from typing import Dict, List, Optional, Any
-from concurrent.futures import ThreadPoolExecutor
+import streamlit as st
 import logging
+from typing import Dict
+import nest_asyncio
 from datetime import datetime
-import threading
-import random
+import pytz
 
-from services.database import db_service
-from services.openai_service import openai_service
-from models import JobAdRequest, JobAdResponse, FeedbackRequest
-from config import settings
+nest_asyncio.apply()
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-class SyncJobtimizerService:
-    def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=4)
-        self._initialized = False
-
-        # Create a dedicated background loop
-        self.loop = asyncio.new_event_loop()
-        self.loop_thread = threading.Thread(target=self._start_loop, daemon=True)
-        self.loop_thread.start()
-
-    def _start_loop(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
-
-    def _run_async(self, coro):
-        """Submit coroutine to the background loop and block until result"""
-        try:
-            future = asyncio.run_coroutine_threadsafe(coro, self.loop)
-            return future.result()  # block until done
-        except Exception as e:
-            logger.error(f"Async execution error: {e}")
-            raise
-
-    def _fix_job_title_formatting(self, title: str) -> str:
-        """Fix job title formatting - no spaces around / in (m/w/d)"""
-        if not title:
-            return title
-
-        import re
-        # Temporarily protect (m/w/d)
-        protected = re.sub(r'\(m/w/d\)', '__MWD__', title)
-
-        # Add spaces around remaining slashes
-        fixed = re.sub(r'\s*/\s*', ' / ', protected)
-
-        # Restore (m/w/d)
-        fixed = fixed.replace('__MWD__', '(m/w/d)')
-
-        return fixed
-
-    def search_job_titles(self, query: str, limit: int = 8) -> List[Dict]:
-        """Search job titles for autocomplete suggestions using vector embeddings"""
-        if len(query) < 2:
-            return []
-
-        try:
-            async def search_titles_async():
-                # Embed user input
-                query_embedding = await openai_service.create_embedding(query)
-
-                # Vector search in DB
-                occupations = await db_service.vector_search_occupations(query_embedding, limit)
-
-                if not occupations:
-                    return [{"title": "couldn't found", "original_name": "", "esco_code": "", "description": ""}]
-
-                # Format results with proper formatting
-                suggestions = []
-                for occ in occupations:
-                    name = occ.get('name', 'Unknown')
-                   # Fix formatting and add (m/w/d)
-                    formatted_name = self._fix_job_title_formatting(name)
-                    name_with_suffix = f"{formatted_name}(m/w/d)"
-
-                    suggestions.append({
-                        'title': name_with_suffix,
-                        'original_name': formatted_name,
-                        'esco_code': occ.get('esco_code', ''),
-                        'description': occ.get('description', '')[:100] + '...' if occ.get('description') else ''
-                    })
-                return suggestions
-
-            return self._run_async(search_titles_async())
-
-        except Exception as e:
-            logger.error(f"Job title search error: {e}")
-            return [{"title": "couldn't found", "original_name": "", "esco_code": "", "description": ""}]
-
-    def initialize(self):
-        """Initialize the service"""
-        if self._initialized:
-            return True
-
-        try:
-            # Ensure database service is fresh
-            async def fresh_connect():
-                # Disconnect if already connected
-                if db_service.client:
-                    db_service.client.close()
-                    db_service.client = None
-                    db_service.db = None
-                    db_service.users_col = None
-                    db_service.occupations_col = None
-                    db_service.feedback_col = None
-
-                # Fresh connection
-                await db_service.connect()
-
-                # Test the connection
-                if db_service.occupations_col is None:
-                    raise RuntimeError("Database connection not properly established")
-
-                return await db_service.occupations_col.count_documents({})
-
-            count = self._run_async(fresh_connect())
-            logger.info(f"Sync service initialized. Found {count} ESCO occupations")
-
-            self._initialized = True
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to initialize sync service: {e}")
-            return False
-
-    def authenticate_user(self, username: str, password: str) -> Optional[Dict]:
-        """Authenticate user"""
-        try:
-            from utils.auth import verify_password
-
-            # Get user from database
-            user = self._run_async(db_service.get_user_by_username(username))
-
-            if user and verify_password(password, user['password_hash']):
-                # Update last login
-                self._run_async(db_service.update_user_login(user['_id']))
-                logger.info(f"User {username} authenticated successfully")
-                return user
-
-            logger.warning(f"Authentication failed for user {username}")
-            return None
-
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
-            return None
-
-    def register_user(self, registration_data: Dict) -> str:
-        """Register a new user"""
-        try:
-            from utils.auth import hash_password
-            from datetime import datetime
-
-            async def register_user_async():
-                # Check if user already exists
-                existing_user = await db_service.get_user_by_username(registration_data['username'])
-
-                if existing_user:
-                    raise ValueError("User with this email already exists")
-
-                # Prepare user data
-                user_data = registration_data.copy()
-                user_data['password_hash'] = hash_password(user_data.pop('password'))
-                user_data['created_at'] = datetime.utcnow()
-
-                # Set default preferences if not provided
-                if 'preferences' not in user_data:
-                    user_data['preferences'] = settings.default_preferences
-
-                # Create user
-                return await db_service.create_user(user_data)
-
-            user_id = self._run_async(register_user_async())
-            logger.info(f"New user registered: {registration_data['username']}")
-            return user_id
-
-        except Exception as e:
-            logger.error(f"Registration error: {e}")
-            raise
-
-    def search_occupations(self, query: str, limit: int = 5) -> List[Dict]:
-        """Search for ESCO occupations using vector embeddings only"""
-        try:
-            async def comprehensive_search():
-                # Step 1: Embed user input
-                query_embedding = await openai_service.create_embedding(query)
-
-                # Step 2: Vector search
-                results = await db_service.vector_search_occupations(query_embedding, limit)
-
-                # Step 3: If no results, return fallback
-                if not results:
-                    logger.warning(f"No matches found for '{query}'")
-                    return [{"name": "couldn't found", "esco_code": "", "description": "", "score": 0.0}]
-
-                return results
-
-            return self._run_async(comprehensive_search())
-
-        except Exception as e:
-            logger.error(f"Search error: {e}")
-            return [{"name": "couldn't found", "esco_code": "", "description": "", "score": 0.0}]
-
-    def generate_job_ad(self, request: JobAdRequest, user_id: str) -> JobAdResponse:
-        """Generate job ad with enhanced randomization and formatting"""
-        try:
-            async def generate_async():
-                # Get user data
-                user = await db_service.get_user_by_id(user_id)
-                if not user:
-                    raise ValueError("Benutzer nicht gefunden")
-
-                # Vector search for matching occupation
-                occupations = await self._search_occupations_async(request.job_title, limit=1)
-
-                if not occupations or occupations[0].get("name") == "couldn't found":
-                    broader_query = request.job_title.split()[0]
-                    occupations = await self._search_occupations_async(broader_query, limit=1)
-
-                if not occupations or occupations[0].get("name") == "couldn't found":
-                    raise ValueError(f"Keine passende Berufsbezeichnung gefunden für: {request.job_title}")
-
-                raw_esco_data = occupations[0]
-
-                company_info = user.get('company_info', {})
-                preferences = user.get('preferences', settings.default_preferences)
-
-                # Prepare the final job title with seniority if provided
-                final_job_title = self._fix_job_title_formatting(request.job_title)
-                if request.seniority_level and request.seniority_years:
-                    from models.job_ad import SENIORITY_LEVELS
-                    seniority_obj = next((s for s in SENIORITY_LEVELS if s.level == request.seniority_level), None)
-                    if seniority_obj:
-                        final_job_title = f"{seniority_obj.display_name} {final_job_title}"
-
-                # Add seniority context for AI
-                seniority_context = ""
-                if request.seniority_level and request.seniority_years:
-                    seniority_context = f"Seniority Level: {request.seniority_level} ({request.seniority_years} Erfahrung). "
-
-                combined_context = seniority_context + (request.additional_context or "")
-
-                # Generate job ad using OpenAI service
-                job_ad = await openai_service.generate_job_ad(
-                    esco_data=raw_esco_data,
-                    company_info=company_info,
-                    preferences=preferences,
-                    additional_context=combined_context,
-                    final_job_title=final_job_title
-                )
-
-                # Normalize ESCO data
-                normalized_esco_data = openai_service._normalize_esco_data(raw_esco_data)
-
-                from models import ESCOData
-                esco_data_obj = ESCOData(**normalized_esco_data)
-
-                return JobAdResponse(
-                    job_ad=job_ad,
-                    esco_data=esco_data_obj,
-                    generation_timestamp=datetime.utcnow(),
-                    user_id=user_id
-                )
-
-            response = self._run_async(generate_async())
-            logger.info(f"Stellenanzeige generiert für Benutzer {user_id}, ESCO-Match: {response.esco_data.name}")
-            return response
-
-        except Exception as e:
-            logger.error(f"Fehler bei der Stellenanzeigen-Generierung: {e}")
-            raise
-
-    def update_user_preferences(self, user_id: str, preferences: Dict) -> bool:
-        """Update user preferences"""
-        try:
-            async def update_preferences_async():
-                return await db_service.update_user_preferences(user_id, preferences)
-
-            result = self._run_async(update_preferences_async())
-            logger.info(f"Updated preferences for user {user_id}: {result}")
-            return result
-
-        except Exception as e:
-            logger.error(f"Failed to update user preferences: {e}")
-            return False
-
-    async def _search_occupations_async(self, query: str, limit: int = 5) -> List[Dict]:
-        """Async helper for searching occupations using vector embeddings only"""
-        try:
-            # Step 1: Embed user input
-            query_embedding = await openai_service.create_embedding(query)
-
-            # Step 2: Vector search
-            results = await db_service.vector_search_occupations(query_embedding, limit)
-
-            # Step 3: Fallback if no results
-            if not results:
-                logger.warning(f"No vector match found for '{query}'")
-                return [{"name": "konnte nicht gefunden", "esco_code": "", "description": "", "score": 0.0}]
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Vector search failed for '{query}': {e}")
-            return [{"name": "konnte nicht gefunden", "esco_code": "", "description": "", "score": 0.0}]
-
-    def refine_job_ad_with_feedback(self, original_ad: str,
-                                    feedback_request: FeedbackRequest,
-                                    user_id: str) -> str:
-        """Refine job ad based on feedback with enhanced logic"""
-        try:
-            async def refine_async():
-                # Convert feedback to expected format
-                feedback_data = {
-                    "feedback_type": feedback_request.feedback_type,
-                    "button_clicks": feedback_request.button_clicks or [],
-                    "text_feedback": feedback_request.text_feedback,
-                    "manual_changes": feedback_request.manual_changes
+# Page config
+st.set_page_config(
+    page_title="Jobtimizer",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Import services and models
+from services.sync_wrapper import sync_service
+from models import JobAdRequest, FeedbackRequest, CompanyInfo
+from utils.auth import get_current_user, is_authenticated, login_user, logout_user
+
+
+# Initialize service
+@st.cache_resource
+def initialize_service():
+    """Initialize the sync service"""
+    success = sync_service.initialize()
+    if success:
+        logger.info("Jobtimizer service initialized successfully")
+        return sync_service
+    else:
+        st.error("Failed to connect to database")
+        st.stop()
+        return None
+
+
+service = initialize_service()
+
+
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'current_ad' not in st.session_state:
+        st.session_state.current_ad = None
+    if 'selected_job_title' not in st.session_state:
+        st.session_state.selected_job_title = None
+    if 'show_registration' not in st.session_state:
+        st.session_state.show_registration = False
+
+
+# ----------------- UI Functions -----------------
+
+def main():
+    # Initialize session state first
+    initialize_session_state()
+    
+    st.title("🎯 JobtimizerAI")
+    st.markdown("### Deutsche Stellenanzeigen Generator mit KI")
+
+    # Sidebar for authentication
+    with st.sidebar:
+        if not is_authenticated():
+            authentication_section()
+        else:
+            user_dashboard()
+
+    # Main content
+    if is_authenticated():
+        job_ad_interface()
+    else:
+        welcome_section()
+
+
+def welcome_section():
+    st.markdown("""
+    ## Willkommen bei Jobtimizer von Westpress!
+
+    **Erstellen Sie professionelle deutsche Stellenanzeigen in Sekunden:**  
+
+    ✨ **KI-gestützte Generation** basierend auf ESCO-Berufsdaten  
+    🎯 **Personalisierte Anzeigen** für Ihr Unternehmen  
+    🔄 **Intelligentes Feedback** für kontinuierliche Verbesserung  
+    📊 **Konsistente Struktur** mit flexiblen Anpassungen  
+
+    **👈 Melden Sie sich links an, um zu beginnen!**
+    """)
+
+
+# ----------------- Authentication -----------------
+
+def authentication_section():
+    if st.session_state.show_registration:
+        registration_form()
+    else:
+        login_form()
+
+
+def login_form():
+    st.header("🔐 Anmeldung")
+    with st.form("login_form"):
+        username = st.text_input("E-Mail", placeholder="ihre.email@unternehmen.de")
+        password = st.text_input("Passwort", type="password")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            login_button = st.form_submit_button("Anmelden")
+        with col2:
+            register_button = st.form_submit_button("Registrieren")
+
+        if login_button and username and password:
+            try:
+                user = service.authenticate_user(username, password)
+                if user:
+                    login_user(user)
+                    st.success("✅ Erfolgreich angemeldet!")
+                    st.rerun()
+                else:
+                    st.error("❌ Ungültige Anmeldedaten")
+            except Exception as e:
+                st.error(f"❌ Anmeldung fehlgeschlagen: {e}")
+                logger.error(f"Login error: {e}")
+
+        if register_button:
+            st.session_state.show_registration = True
+            st.rerun()
+
+
+def registration_form():
+    st.header("📝 Registrierung")
+    with st.form("registration_form"):
+        username = st.text_input("E-Mail*")
+        password = st.text_input("Passwort*", type="password")
+        company_name = st.text_input("Unternehmensname*")
+        industry = st.text_input("Branche*")
+        mission = st.text_area("Mission/Vision")
+        location = st.text_input("Standort")
+        culture_values = st.text_area("Unternehmenskultur & Werte (kommagetrennt)")
+        company_size = st.selectbox("Unternehmensgröße", ["<10", "10-50", "50-200", "200-1000", ">1000"])
+
+        col1, col2 = st.columns(2)
+        with col1:
+            register_button = st.form_submit_button("Registrieren")
+        with col2:
+            back_button = st.form_submit_button("Zurück zur Anmeldung")
+
+        if register_button:
+            if not all([username, password, company_name, industry]):
+                st.error("❌ Pflichtfelder ausfüllen")
+                return
+            if len(password) < 6:
+                st.error("❌ Passwort muss mindestens 6 Zeichen haben")
+                return
+
+            culture_list = [c.strip() for c in culture_values.split(',')] if culture_values else []
+
+            company_info = CompanyInfo(
+                company_name=company_name,
+                industry=industry,
+                mission=mission or None,
+                culture=culture_list,
+                values=culture_list,
+                size=company_size,
+                location=location or None
+            )
+
+            registration_data = {
+                "username": username,
+                "password": password,
+                "company_info": company_info.model_dump()
+            }
+
+            try:
+                service.register_user(registration_data)
+                st.success("✅ Registrierung erfolgreich! Sie können sich jetzt anmelden.")
+                st.session_state.show_registration = False
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Registrierung fehlgeschlagen: {e}")
+                logger.error(f"Registration error: {e}")
+
+        if back_button:
+            st.session_state.show_registration = False
+            st.rerun()
+
+
+def user_dashboard():
+    user = get_current_user()
+    st.header(f"👋 Willkommen {user['username']}!")
+    st.write(f"**{user['company_info']['company_name']}**")
+
+    # Add tabs for navigation
+    tab1, tab2 = st.tabs(["🏠 Dashboard", "⚙️ Einstellungen"])
+
+    with tab1:
+        if st.button("🚪 Abmelden"):
+            logout_user()
+            st.rerun()
+
+    with tab2:
+        user_profile_settings()
+
+
+def user_profile_settings():
+    """Enhanced user profile settings interface with new tone options"""
+    user = get_current_user()
+    st.header("⚙️ Profil Einstellungen")
+
+    current_prefs = user.get('preferences', {})
+
+    with st.form("preferences_form"):
+        st.subheader("Stellenanzeigen Einstellungen")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Updated tone options
+            tone_options = ["sie", "du", "ohne"]
+            current_tone = current_prefs.get("tone", "sie")
+            if current_tone not in tone_options:
+                current_tone = "sie"
+
+            tone = st.selectbox(
+                "Anrede-Form",
+                options=tone_options,
+                index=tone_options.index(current_tone),
+                help="Wie sollen Kandidaten angesprochen werden?"
+            )
+
+            # NEW: Separate casual tone option
+            casual_tone = st.checkbox(
+                "Lockerer Ton",
+                value=current_prefs.get("casual_tone", False),
+                help="Macht die Anzeige lockerer und entspannter (unabhängig von Sie/Du)"
+            )
+
+            formality_options = ["formal", "semi_formal", "casual"]
+            current_formality = current_prefs.get("formality_level", "formal")
+            if current_formality not in formality_options:
+                current_formality = "formal"
+
+            formality_level = st.selectbox(
+                "Formalitätsstufe",
+                options=formality_options,
+                index=formality_options.index(current_formality),
+                help="Wie formal sollen die Anzeigen sein?"
+            )
+
+        with col2:
+            focus_options = ["experience", "potential", "skills", "culture,mission,vision"]
+            current_focus = current_prefs.get("candidate_focus", "experience")
+            if current_focus not in focus_options:
+                current_focus = "experience"
+
+            candidate_focus = st.selectbox(
+                "Kandidaten-Fokus",
+                options=focus_options,
+                index=focus_options.index(current_focus),
+                help="Worauf soll bei Kandidaten fokussiert werden?"
+            )
+
+            # Language style options
+            style_options = ["Standard", "Einfacher Deutsch", "Kreativ"]
+            current_style = current_prefs.get("language_style", "Standard")
+
+            # Normalize casing if DB stores lowercase values
+            style_map = {
+                "standard": "Standard",
+                "einfacher deutsch": "Einfacher Deutsch",
+                "kreativ": "Kreativ"
+            }
+            current_style = style_map.get(str(current_style).lower(), "Standard")
+
+            language_style = st.selectbox(
+                "Sprachstil",
+                options=style_options,
+                index=style_options.index(current_style),
+                help="Sprachlicher Stil der Anzeigen"
+            )
+
+        st.markdown("---")
+        save_prefs = st.form_submit_button("💾 Einstellungen Speichern", use_container_width=True)
+
+        if save_prefs:
+            try:
+                new_preferences = {
+                    "tone": tone,
+                    "casual_tone": casual_tone,  # NEW field
+                    "formality_level": formality_level,
+                    "candidate_focus": candidate_focus,
+                    "language_style": language_style
                 }
 
-                # Refine using OpenAI
-                refined_ad = await openai_service.refine_job_ad_with_feedback(original_ad, feedback_data)
+                success = service.update_user_preferences(user['_id'], new_preferences)
 
-                # Save feedback
-                from models import Feedback
-                from datetime import datetime
+                if success:
+                    if 'preferences' not in st.session_state.user:
+                        st.session_state.user['preferences'] = {}
+                    st.session_state.user['preferences'].update(new_preferences)
 
-                feedback = Feedback(
-                    user_id=user_id,
-                    job_title="",
-                    original_ad=original_ad,
-                    feedback_request=feedback_request,
-                    refined_ad=refined_ad,
-                    created_at=datetime.utcnow()
+                    st.success("✅ Einstellungen erfolgreich gespeichert!")
+                else:
+                    st.error("❌ Fehler beim Speichern der Einstellungen")
+
+            except Exception as e:
+                st.error(f"❌ Fehler beim Speichern: {e}")
+                logger.error(f"Preference update error: {e}")
+
+        with st.expander("🔍 Debug: Aktuelle Werte"):
+            st.json(current_prefs)
+
+
+# ----------------- Job Ad Generation -----------------
+
+def fix_job_title_formatting(title: str) -> str:
+    """Fix job title formatting - no spaces around / in (m/w/d)"""
+    if not title:
+        return title
+
+    import re
+    # Temporarily protect (m/w/d) from space addition
+    protected = re.sub(r'\(m/w/d\)', '__MWD__', title)
+    
+    # Add spaces around remaining slashes
+    fixed = re.sub(r'\s*/\s*', ' / ', protected)
+    
+    # Restore (m/w/d) without spaces
+    fixed = fixed.replace('__MWD__', '(m/w/d)')
+    
+    return fixed
+
+
+def job_ad_interface():
+    # Ensure session state is initialized
+    initialize_session_state()
+    
+    user = get_current_user()
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.header("🎯 Stellenanzeige erstellen")
+
+        # Job title input with suggestions
+        st.subheader("Jobtitel eingeben")
+
+        job_title_input = st.text_input(
+            "Jobtitel*",
+            placeholder="Z.B. Software Engineer, Marketing Manager, ...",
+            help="Beginnen Sie zu tippen für Vorschläge aus der ESCO-Datenbank",
+            key="job_title_input"
+        )
+
+        # Only search if query changed and is long enough
+        suggestions = []
+        if job_title_input and len(job_title_input) >= 2:
+            try:
+                suggestions = service.search_job_titles(job_title_input, limit=6)
+            except Exception as e:
+                st.error(f"Fehler bei der Vorschlagssuche: {e}")
+                suggestions = []
+
+        # Display suggestions with fixed formatting
+        selected_suggestion = None
+        if suggestions:
+            st.write("**💡 Vorschläge aus ESCO-Datenbank:**")
+
+            cols = st.columns(2)
+            for i, suggestion in enumerate(suggestions):
+                col = cols[i % 2]
+                with col:
+                    # Fix formatting of suggestion title
+                    fixed_title = fix_job_title_formatting(suggestion['title'])
+                    if st.button(
+                            f"🎯 {fixed_title}",
+                            key=f"suggestion_{i}",
+                            help=suggestion['description']
+                    ):
+                        selected_suggestion = suggestion
+                        st.session_state.selected_job_title = fixed_title
+                        st.rerun()
+
+        # Clean only the base title (without suffix), then append (m/w/d) if needed
+        base_title = fix_job_title_formatting(job_title_input)
+
+        final_job_title = (
+                st.session_state.get('selected_job_title')
+                or (base_title + "(m/w/d)" if job_title_input and not job_title_input.endswith("(m/w/d)") else base_title)
+        )
+
+        if final_job_title != fix_job_title_formatting(job_title_input) and final_job_title:
+            st.info(f"✅ Gewählter Titel: **{final_job_title}**")
+            if st.button("🗑️ Auswahl zurücksetzen"):
+                if 'selected_job_title' in st.session_state:
+                    del st.session_state.selected_job_title
+                st.rerun()
+
+        # Seniority Level Selection (Optional)
+        seniority_section(final_job_title)
+
+        # Job ad form
+        with st.form("job_ad_form"):
+            # Get the final title with seniority if selected
+            display_title = get_final_job_title_with_seniority(final_job_title)
+
+            st.text_input("Finaler Jobtitel", value=display_title or "", disabled=True)
+
+            additional_context = st.text_area(
+                "Zusätzliche Informationen",
+                placeholder="Besondere Anforderungen, Benefits, Arbeitsweise..."
+            )
+
+            generate_button = st.form_submit_button("✨ Stellenanzeige Generieren")
+
+            if generate_button and final_job_title:
+                with st.spinner("🤖 KI erstellt Ihre Stellenanzeige..."):
+                    try:
+                        search_title = final_job_title.replace("(m/w/d)", "").strip()
+                        seniority_level = st.session_state.get('selected_seniority_level')
+                        seniority_years = st.session_state.get('selected_seniority_years')
+
+                        request = JobAdRequest(
+                            job_title=search_title,
+                            additional_context=additional_context,
+                            seniority_level=seniority_level,
+                            seniority_years=seniority_years,
+                        )
+
+                        result = service.generate_job_ad(request, user['_id'])
+                        st.session_state.current_ad = result
+
+                        # Clean up session state
+                        cleanup_session_state()
+
+                        st.success("✅ Stellenanzeige erstellt!")
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ Fehler beim Erstellen: {e}")
+                        logger.error(f"Fehler bei der Stellenanzeigen-Generierung: {e}")
+
+            elif generate_button:
+                st.error("❌ Bitte geben Sie einen Jobtitel ein oder wählen Sie einen Vorschlag")
+
+    with col2:
+        # Safe check for current_ad
+        if st.session_state.get('current_ad') is not None:
+            feedback_section()
+
+    # Safe check for current_ad
+    if st.session_state.get('current_ad') is not None:
+        display_job_ad()
+
+
+def seniority_section(job_title):
+    """Display seniority level selection section - now in German"""
+    if not job_title:
+        return
+
+    st.subheader("🎖️ Erfahrungsstufe (Optional)")
+
+    # Import the seniority levels
+    from models.job_ad import SENIORITY_LEVELS
+
+    # Check if seniority selection is enabled
+    show_seniority = st.checkbox("Erfahrungsstufe hinzufügen", key="show_seniority_checkbox")
+
+    if show_seniority:
+        st.write("**Wählen Sie die Erfahrungsstufe:**")
+
+        # Create buttons for each seniority level
+        cols = st.columns(len(SENIORITY_LEVELS))
+
+        for i, seniority in enumerate(SENIORITY_LEVELS):
+            with cols[i]:
+                if st.button(
+                        f"**{seniority.display_name}**\n({seniority.years})",
+                        key=f"seniority_{seniority.level}",
+                        help=f"Fügt '{seniority.display_name}' vor dem Jobtitel hinzu"
+                ):
+                    st.session_state.selected_seniority_level = seniority.level
+                    st.session_state.selected_seniority_years = seniority.years
+                    st.session_state.selected_seniority_display = seniority.display_name
+                    st.rerun()
+
+        # Show selected seniority
+        if 'selected_seniority_display' in st.session_state:
+            st.success(
+                f"✅ Gewählt: **{st.session_state.selected_seniority_display}** ({st.session_state.selected_seniority_years})")
+
+            if st.button("🗑️ Erfahrungsstufe zurücksetzen", key="reset_seniority"):
+                st.session_state.pop('selected_seniority_level', None)
+                st.session_state.pop('selected_seniority_years', None)
+                st.session_state.pop('selected_seniority_display', None)
+                st.rerun()
+    else:
+        # Clear seniority selection if checkbox is unchecked
+        if 'selected_seniority_level' in st.session_state:
+            st.session_state.pop('selected_seniority_level', None)
+            st.session_state.pop('selected_seniority_years', None)
+            st.session_state.pop('selected_seniority_display', None)
+
+
+def get_final_job_title_with_seniority(base_title):
+    """Get the final job title with seniority prefix if selected"""
+    if not base_title:
+        return base_title
+
+    seniority_display = st.session_state.get('selected_seniority_display')
+
+    if seniority_display:
+        # Remove (m/w/d) temporarily, add seniority, then add (m/w/d) back
+        title_without_suffix = base_title.replace("(m/w/d)", "").strip()
+        return f"{seniority_display} {title_without_suffix}(m/w/d)"
+
+    return base_title
+
+
+def cleanup_session_state():
+    """Clean up session state after job ad generation"""
+    keys_to_remove = [
+        'selected_job_title',
+        'selected_seniority_level',
+        'selected_seniority_years',
+        'selected_seniority_display'
+        # Removed pay range keys
+    ]
+    for key in keys_to_remove:
+        st.session_state.pop(key, None)
+
+
+# ----------------- Feedback -----------------
+
+def feedback_section():
+    st.header("🔧 Schnelle Anpassungen")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📈 Formeller"):
+            apply_feedback(["mehr_formell"], None)
+        if st.button("🎯 Mehr Benefits"):
+            apply_feedback(["mehr_benefits"], None)
+    with col2:
+        if st.button("😊 Lockerer"):
+            apply_feedback(["lockerer"], None)  # Changed to 'lockerer'
+        if st.button("🏢 Mehr Kultur"):
+            apply_feedback(["mehr_unternehmenskultur"], None)
+
+    custom_feedback = st.text_area("💬 Individuelle Anpassungen")
+    if st.button("🔄 Anpassung anwenden") and custom_feedback:
+        apply_feedback(None, custom_feedback)
+
+
+def apply_feedback(button_clicks, text_feedback):
+    try:
+        with st.spinner("🤖 Stellenanzeige wird verfeinert..."):
+            feedback_request = FeedbackRequest(
+                feedback_type="button_click" if button_clicks else "text_feedback",
+                button_clicks=button_clicks,
+                text_feedback=text_feedback
+            )
+            refined_ad = service.refine_job_ad_with_feedback(
+                st.session_state.current_ad.job_ad,
+                feedback_request,
+                get_current_user()['_id']
+            )
+            st.session_state.current_ad.job_ad = refined_ad
+            st.success("✅ Anpassung angewendet!")
+            st.rerun()
+    except Exception as e:
+        st.error(f"❌ Fehler beim Verfeinern: {e}")
+
+
+# ----------------- Display Job Ad -----------------
+
+def display_job_ad():
+    st.header("📄 Ihre Stellenanzeige")
+    user = get_current_user()
+    
+    # Get Germany timezone
+    germany_tz = pytz.timezone('Europe/Berlin')
+    created_time = st.session_state.current_ad.generation_timestamp.replace(tzinfo=pytz.UTC).astimezone(germany_tz)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("🏢 Unternehmen", user['company_info']['company_name'])
+    with col2:
+        # Don't show seniority info next to "Ihr Profil" anymore
+        st.metric("🎯 Position", st.session_state.current_ad.esco_data.name)
+    with col3:
+        st.metric("⏰ Erstellt", created_time.strftime("%H:%M"))
+
+    st.markdown("---")
+    st.markdown(st.session_state.current_ad.job_ad)
+    st.markdown("---")
+
+    edited_ad = st.text_area("📝 Bearbeiten", value=st.session_state.current_ad.job_ad, height=400)
+    if edited_ad != st.session_state.current_ad.job_ad:
+        if st.button("💾 Änderungen speichern"):
+            try:
+                feedback_request = FeedbackRequest(
+                    feedback_type="manual_edit",
+                    manual_changes=edited_ad
                 )
+                service.refine_job_ad_with_feedback(
+                    st.session_state.current_ad.job_ad,
+                    feedback_request,
+                    user['_id']
+                )
+                st.session_state.current_ad.job_ad = edited_ad
+                st.success("✅ Änderungen gespeichert!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Fehler beim Speichern: {e}")
 
-                await db_service.save_feedback(feedback.model_dump())
-                return refined_ad
-
-            refined_ad = self._run_async(refine_async())
-
-            self._update_user_preferences_from_feedback(user_id, feedback_request)
-
-            logger.info(f"Job ad refined for user {user_id}")
-            return refined_ad
-
-        except Exception as e:
-            logger.error(f"Refinement error: {e}")
-            raise
-
-    def _update_user_preferences_from_feedback(self, user_id: str, feedback: FeedbackRequest):
-        """Update user preferences based on feedback patterns"""
-        try:
-            async def update_preferences_async():
-                user = await db_service.get_user_by_id(user_id)
-                if not user:
-                    return
-
-                preferences = user.get('preferences', {})
-                updated = False
-
-                # Analyze button clicks with enhanced logic
-                if feedback.button_clicks:
-                    for click in feedback.button_clicks:
-                        if click == "mehr_formell":
-                            preferences['formality_level'] = 'formal'
-                            preferences['casual_tone'] = False  # Reset casual tone
-                            updated = True
-                        elif click == "lockerer":  # Changed from "weniger_formell"
-                            preferences['casual_tone'] = True  # Set casual tone regardless of Sie/Du
-                            updated = True
-                        elif click == "mehr_du_ton":
-                            preferences['tone'] = 'du'
-                            updated = True
-                        elif click == "mehr_sie_ton":
-                            preferences['tone'] = 'sie'
-                            updated = True
-                        elif click == "mehr_benefits":
-                            if 'template_customizations' not in preferences:
-                                preferences['template_customizations'] = {}
-                            preferences['template_customizations']['include_benefits'] = True
-                            updated = True
-
-                # Analyze text feedback
-                if feedback.text_feedback:
-                    text = feedback.text_feedback.lower()
-                    if 'formell' in text or 'formal' in text:
-                        preferences['formality_level'] = 'formal'
-                        preferences['casual_tone'] = False
-                        updated = True
-                    elif 'locker' in text or 'entspannt' in text:
-                        preferences['casual_tone'] = True
-                        updated = True
-                    elif 'sie' in text and 'anrede' in text:
-                        preferences['tone'] = 'sie'
-                        updated = True
-                    elif 'du' in text and ('anrede' in text or 'duzen' in text):
-                        preferences['tone'] = 'du'
-                        updated = True
-
-                # Save updated preferences
-                if updated:
-                    await db_service.update_user_preferences(user_id, preferences)
-                    logger.info(f"Updated preferences for user {user_id}: {preferences}")
-
-            self._run_async(update_preferences_async())
-
-        except Exception as e:
-            logger.error(f"Preference update error: {e}")
-
-    def cleanup(self):
-        """Cleanup resources"""
-        if self.executor:
-            self.executor.shutdown(wait=True)
+    # Also updated the filename generation
+    job_name_safe = st.session_state.current_ad.esco_data.name.replace(' ', '_').replace('/', '_')
+    st.download_button(
+        label="📥 Als Markdown herunterladen",
+        data=st.session_state.current_ad.job_ad,
+        file_name=f"stellenanzeige_{job_name_safe}.md",
+        mime="text/markdown"
+    )
 
 
-# Global sync service instance
-sync_service = SyncJobtimizerService()
+# ----------------- Run -----------------
+
+if __name__ == "__main__":
+    main()
