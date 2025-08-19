@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 import threading
 import random
-
+import re
 from services.database import db_service
 from services.openai_service import openai_service
 from models import JobAdRequest, JobAdResponse, FeedbackRequest
@@ -38,14 +38,16 @@ class SyncJobtimizerService:
             raise
 
     def _fix_job_title_formatting(self, title: str) -> str:
-        """Fix job title formatting - ensure spaces around /"""
-        if not title:
-            return title
-
-        import re
-        # Replace / with " / " but avoid double spaces
-        fixed_title = re.sub(r'\s*/\s*', ' / ', title)
-        return fixed_title
+    """Fix job title formatting - ensure NO spaces around / in (m/w/d)"""
+    if not title:
+        return title
+    normalized = re.sub(r'\(\s*m\s*/\s*w\s*/\s*d\s*\)', '(m/w/d)', title, flags=re.IGNORECASE)
+    parts = re.split(r'(\(m/w/d\))', normalized, flags=re.IGNORECASE)
+    for i in range(len(parts)):
+        if not re.match(r'\(m/w/d\)', parts[i], flags=re.IGNORECASE):
+            parts[i] = re.sub(r'\s*/\s*', ' / ', parts[i])
+    
+    return ''.join(parts)
 
     def search_job_titles(self, query: str, limit: int = 8) -> List[Dict]:
         """Search job titles for autocomplete suggestions using vector embeddings"""
@@ -413,3 +415,4 @@ class SyncJobtimizerService:
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
+
