@@ -351,11 +351,13 @@ def job_ad_interface():
                         st.session_state.selected_job_title = fixed_title
                         st.rerun()
 
-        # Use selected suggestion or manual input
+        # Clean only the base title (without suffix), then append (m/w/d) if needed
+        base_title = fix_job_title_formatting(job_title_input)
+
         final_job_title = (
-                st.session_state.get('selected_job_title') or
-                (fix_job_title_formatting(job_title_input) + " (m/w/d)" if job_title_input and not job_title_input.endswith(
-                    "(m/w/d)") else fix_job_title_formatting(job_title_input))
+                st.session_state.get('selected_job_title')
+                or (base_title + " (m/w/d)" if job_title_input and not job_title_input.endswith(
+            "(m/w/d)") else base_title)
         )
 
         if final_job_title != fix_job_title_formatting(job_title_input) and final_job_title:
@@ -587,3 +589,4 @@ def display_job_ad():
 
 if __name__ == "__main__":
     main()
+
