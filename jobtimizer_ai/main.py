@@ -4,6 +4,11 @@ from typing import Dict
 import nest_asyncio
 from datetime import datetime
 import pytz
+import sys
+import os
+
+# Add the current directory to Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 nest_asyncio.apply()
 
@@ -19,11 +24,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Import services and models
-from services.sync_wrapper import sync_service
-from models import JobAdRequest, FeedbackRequest, CompanyInfo
-from utils.auth import get_current_user, is_authenticated, login_user, logout_user
-
+# Import services and models with error handling
+try:
+    from services.sync_wrapper import sync_service
+    from models import JobAdRequest, FeedbackRequest, CompanyInfo
+    from utils.auth import get_current_user, is_authenticated, login_user, logout_user
+except ImportError as e:
+    st.error(f"Import error: {e}")
+    st.error("Please check that all required files are in the correct directories")
+    st.stop()
 
 # Initialize service
 @st.cache_resource
@@ -685,4 +694,5 @@ def initialize_session_state():
 
 if __name__ == "__main__":
     main()
+
 
