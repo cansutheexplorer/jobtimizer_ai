@@ -24,9 +24,23 @@ class SyncJobtimizerService:
         self.loop_thread = threading.Thread(target=self._start_loop, daemon=True)
         self.loop_thread.start()
 
-    def _start_loop(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+    def score_job_ad(self, job_ad_text: str, job_title: str, user_id: str) -> Dict:
+        """Score job ad using both systems"""
+        try:
+            async def score_async():
+                from services.scoring_service import scoring_service
+                score_result = await scoring_service.score_job_ad_complete(
+                    job_ad_text, job_title, user_id
+                )
+                return score_result.model_dump()
+
+            result = self._run_async(score_async())
+            logger.info(f"Job ad scored for user {user_id}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Scoring error: {e}")
+            raise
 
     def _run_async(self, coro):
         """Submit coroutine to the background loop and block until result"""
@@ -57,6 +71,7 @@ class SyncJobtimizerService:
                 parts[i] = re.sub(r'\s*/\s*', ' / ', parts[i])
         
         return ''.join(parts)
+        
 
     def search_job_titles(self, query: str, limit: int = 8) -> List[Dict]:
         """Search job titles for autocomplete suggestions using vector embeddings"""
@@ -439,3 +454,4 @@ class SyncJobtimizerService:
 
 # Global sync service instance
 sync_service = SyncJobtimizerService()
+
