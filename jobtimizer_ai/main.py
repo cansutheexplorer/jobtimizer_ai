@@ -29,6 +29,26 @@ try:
     from services.sync_wrapper import sync_service
     from models import JobAdRequest, FeedbackRequest, CompanyInfo
     from utils.auth import get_current_user, is_authenticated, login_user, logout_user
+    # Import seniority levels if they exist
+    try:
+        from models.job_ad import SENIORITY_LEVELS
+    except ImportError:
+        # Define basic seniority levels if not available in models
+        from dataclasses import dataclass
+        
+        @dataclass
+        class SeniorityLevel:
+            level: str
+            display_name: str
+            years: str
+        
+        SENIORITY_LEVELS = [
+            SeniorityLevel("junior", "Junior", "0-2 Jahre"),
+            SeniorityLevel("mid", "Mid-Level", "2-5 Jahre"), 
+            SeniorityLevel("senior", "Senior", "5+ Jahre"),
+            SeniorityLevel("lead", "Lead", "7+ Jahre")
+        ]
+        
 except ImportError as e:
     st.error(f"Import error: {e}")
     st.error("Please check that all required files are in the correct directories")
@@ -730,8 +750,168 @@ def seniority_section(job_title):
 
     st.subheader("🎖️ Erfahrungsstufe (Optional)")
 
-    # Import the seniority levels
-    from models.job_ad import SENIORITY_LEVELS
-
     # Check if seniority selection is enabled
-    show_seniority = st.checkbox("Erfahrung
+    show_seniority = st.checkbox("Erfahrungsstufe hinzufügen", key="show_seniority_checkbox")
+
+    if show_seniority:
+        st.write("**Wählen Sie die Erfahrungsstufe:**")
+
+        # Create buttons for each seniority level
+        cols = st.columns(len(SENIORITY_LEVELS))
+
+        for i, seniority in enumerate(SENIORITY_LEVELS):
+            with cols[i]:
+                if st.button(
+                        f"**{seniority.display_name}**\n({seniority.years})",
+                        key=f"seniority_btn_{seniority.level}_{i}",
+                        help=f"Fügt '{seniority.display_name}' vor dem Jobtitel hinzu"
+                ):
+                    st.session_state.selected_seniority_level = seniority.level
+                    st.session_state.selected_seniority_years = seniority.years
+                    st.session_state.selected_seniority_display = seniority.display_name
+                    st.rerun()
+
+        # Show selected seniority
+        if 'selected_seniority_display' in st.session_state:
+            st.success(
+                f"✅ Gewählt: **{st.session_state.selected_seniority_display}** ({st.session_state.selected_seniority_years})")
+
+            if st.button("🗑️ Erfahrungsstufe zurücksetzen", key="reset_seniority_selection"):
+                st.session_state.pop('selected_seniority_level', None)
+                st.session_state.pop('selected_seniority_years', None)
+                st.session_state.pop('selected_seniority_display', None)
+                st.rerun()
+    else:
+        # Clear seniority selection if checkbox is unchecked
+        if 'selected_seniority_level' in st.session_state:
+            st.session_state.pop('selected_seniority_level', None)
+            st.session_state.pop('selected_seniority_years', None)
+            st.session_state.pop('selected_seniority_display', None)
+
+def get_final_job_title_with_seniority(base_title):
+    """Get the final job title with seniority prefix if selected"""
+    if not base_title:
+        return base_title
+
+    seniority_display = st.session_state.get('selected_seniority_display')
+
+    if seniority_display:
+        # Remove (m/w/d) temporarily, add seniority, then add (m/w/d) back
+        title_without_suffix = base_title.replace("(m/w/d)", "").strip()
+        return f"{seniority_display} {title_without_suffix}(m/w/d)"
+
+    return base_title
+
+def cleanup_session_state():
+    """Clean up session state after job ad generation"""
+    keys_to_remove = [
+        'selected_job_title',
+        'selected_seniority_level',
+        'selected_seniority_years',
+        'selected_seniority_display'
+    ]
+    for key in keys_to_remove:
+        st.session_state.pop(key, None)
+
+# ----------------- Feedback -----------------
+
+def feedback_section():
+    st.header("🔧 Schnelle Anpassungen")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📈 Formeller", key="feedback_more_formal"):
+            apply_feedback(["mehr_formell"], None)
+        if st.button("🎯 Mehr Benefits", key="feedback_more_benefits"):
+            apply_feedback(["mehr_benefits"], None)
+    with col2:
+        if st.button("😊 Lockerer", key="feedback_more_casual"):
+            apply_feedback(["lockerer"], None)
+        if st.button("🏢 Mehr Kultur", key="feedback_more_culture"):
+            apply_feedback(["mehr_unternehmenskultur"], None)
+
+    custom_feedback = st.text_area("💬 Individuelle Anpassungen", key="custom_feedback_text")
+    if st.button("🔄 Anpassung anwenden", key="apply_custom_feedback") and custom_feedback:
+        apply_feedback(None, custom_feedback)
+
+def apply_feedback(button_clicks, text_feedback):
+    try:
+        with st.spinner("🤖 Stellenanzeige wird verfeinert..."):
+            feedback_request = FeedbackRequest(
+                feedback_type="button_click" if button_clicks else "text_feedback",
+                button_clicks=button_clicks,
+                text_feedback=text_feedback
+            )
+            refined_ad = service.refine_job_ad_with_feedback(
+                st.session_state.current_ad.job_ad,
+                feedback_request,
+                get_current_user()['_id']
+            )
+            st.session_state.current_ad.job_ad = refined_ad
+            st.success("✅ Anpassung angewendet!")
+            st.rerun()
+    except Exception as e:
+        st.error(f"❌ Fehler beim Verfeinern: {e}")
+
+# ----------------- Display Job Ad -----------------
+
+def display_job_ad():
+    st.header("📄 Ihre Stellenanzeige")
+    user = get_current_user()
+    
+    # Get Germany timezone - fixed
+    germany_tz = pytz.timezone('Europe/Berlin')
+    
+    # Ensure the timestamp is timezone-aware
+    timestamp = st.session_state.current_ad.generation_timestamp
+    if timestamp.tzinfo is None:
+        # If naive datetime, assume it's UTC
+        timestamp = timestamp.replace(tzinfo=pytz.UTC)
+    
+    # Convert to Germany time
+    created_time = timestamp.astimezone(germany_tz)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("🏢 Unternehmen", user['company_info']['company_name'])
+    with col2:
+        st.metric("🎯 Position", st.session_state.current_ad.esco_data.name)
+    with col3:
+        st.metric("⏰ Erstellt", created_time.strftime("%d.%m.%Y %H:%M"))  # German format
+
+    st.markdown("---")
+    st.markdown(st.session_state.current_ad.job_ad)
+    st.markdown("---")
+
+    edited_ad = st.text_area("📝 Bearbeiten", value=st.session_state.current_ad.job_ad, height=400, key="edit_job_ad")
+    if edited_ad != st.session_state.current_ad.job_ad:
+        if st.button("💾 Änderungen speichern", key="save_manual_changes"):
+            try:
+                feedback_request = FeedbackRequest(
+                    feedback_type="manual_edit",
+                    manual_changes=edited_ad
+                )
+                service.refine_job_ad_with_feedback(
+                    st.session_state.current_ad.job_ad,
+                    feedback_request,
+                    user['_id']
+                )
+                st.session_state.current_ad.job_ad = edited_ad
+                st.success("✅ Änderungen gespeichert!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Fehler beim Speichern: {e}")
+
+    # Download button
+    job_name_safe = st.session_state.current_ad.esco_data.name.replace(' ', '_').replace('/', '_')
+    st.download_button(
+        label="📥 Als Markdown herunterladen",
+        data=st.session_state.current_ad.job_ad,
+        file_name=f"stellenanzeige_{job_name_safe}.md",
+        mime="text/markdown",
+        key="download_job_ad"
+    )
+
+# ----------------- Run -----------------
+
+if __name__ == "__main__":
+    main()
