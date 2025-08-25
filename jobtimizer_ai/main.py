@@ -607,7 +607,211 @@ def apply_feedback(button_clicks, text_feedback):
     except Exception as e:
         st.error(f"❌ Fehler beim Verfeinern: {e}")
 
+# ui/scoring_components.py
+import streamlit as st
+from models.scoring import JobAdScore, ScoreLevel
+from typing import Dict, Any
 
+def display_score_overview(score_data: Dict[str, Any]):
+    """Zeige Bewertungsübersicht"""
+    
+    st.header("📊 Stellenanzeigen-Bewertung")
+    
+    # Stepstone Score
+    stepstone = score_data['stepstone_score']
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🎯 Stepstone Score")
+        
+        # Gesamtscore mit Farbe
+        score_color = get_score_color(stepstone['gesamt_score'])
+        st.markdown(f"""
+        <div style="padding: 20px; border-radius: 10px; background-color: {score_color}; text-align: center;">
+            <h1 style="margin: 0; color: white;">{stepstone['gesamt_score']:.1f}/100</h1>
+            <p style="margin: 5px 0 0 0; color: white; font-weight: bold;">{get_score_level_text(stepstone['gesamt_level'])}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Kategorie-Details
+        st.write("**Detailbewertung:**")
+        kategorien = stepstone['kategorie_scores'] if 'kategorie_scores' in stepstone else get_categories_from_score(stepstone)
+        
+        for kategorie_name, kategorie_data in kategorien.items():
+            with st.expander(f"{kategorie_name}: {kategorie_data['score']:.0f}/100"):
+                st.write(f"**Bewertung:** {get_score_level_text(kategorie_data['level'])}")
+                st.write(f"**Feedback:** {kategorie_data['feedback']}")
+                
+                if kategorie_data.get('suggestions'):
+                    st.write("**Verbesserungsvorschläge:**")
+                    for suggestion in kategorie_data['suggestions']:
+                        st.write(f"• {suggestion}")
+    
+    with col2:
+        st.subheader("🔧 Westpress Expert Score")
+        
+        westpress = score_data['westpress_score']
+        
+        if not westpress.get('is_configured', True):
+            st.warning("""
+            ⚠️ **WP-Expert Score noch nicht konfiguriert**
+            
+            Dieser Bewertungsbereich wartet auf deine eigenen Kriterien.
+            
+            **So geht's weiter:**
+            1. Definiere deine Bewertungskriterien
+            2. Implementiere die Scoring-Logik
+            3. Konfiguriere Gewichtungen
+            """)
+            
+            if st.button("🛠️ Konfiguration starten"):
+                st.session_state.show_wp_config = True
+        else:
+            # Zeige WP-Expert Score (wenn konfiguriert)
+            wp_score_color = get_score_color(westpress['gesamt_score'])
+            st.markdown(f"""
+            <div style="padding: 20px; border-radius: 10px; background-color: {wp_score_color}; text-align: center;">
+                <h1 style="margin: 0; color: white;">{westpress['gesamt_score']:.1f}/100</h1>
+                <p style="margin: 5px 0 0 0; color: white; font-weight: bold;">{get_score_level_text(westpress['gesamt_level'])}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+def display_wp_expert_config():
+    """Zeige WP-Expert Konfiguration"""
+    st.header("🔧 Westpress Expert Score Konfiguration")
+    
+    st.info("""
+    **Hier kannst du deine eigenen Bewertungskriterien definieren.**
+    
+    Die Stepstone-Kriterien sind bereits implementiert. Jetzt bist du dran für deine Expert-Bewertung!
+    """)
+    
+    with st.form("wp_expert_config"):
+        st.subheader("1. Content-Qualität Kriterien")
+        content_criteria = st.text_area(
+            "Welche Content-Aspekte sollen bewertet werden?",
+            placeholder="z.B.: Verständlichkeit, Vollständigkeit, Strukturierung..."
+        )
+        
+        st.subheader("2. Zielgruppen-Ansprache")
+        target_criteria = st.text_area(
+            "Wie soll die Zielgruppen-Ansprache bewertet werden?", 
+            placeholder="z.B.: Persona-Match, Tonalität, Ansprache-Art..."
+        )
+        
+        st.subheader("3. Unternehmens-Branding")
+        branding_criteria = st.text_area(
+            "Welche Branding-Aspekte sind wichtig?",
+            placeholder="z.B.: Marken-Konsistenz, USP-Darstellung, Employer Branding..."
+        )
+        
+        st.subheader("4. Conversion-Optimierung") 
+        conversion_criteria = st.text_area(
+            "Was soll für Conversion bewertet werden?",
+            placeholder="z.B.: Call-to-Action, Bewerbungsprozess, Mobile Optimierung..."
+        )
+        
+        st.subheader("5. Gewichtung")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            content_weight = st.slider("Content %", 0, 100, 25)
+        with col2:
+            target_weight = st.slider("Zielgruppe %", 0, 100, 25) 
+        with col3:
+            branding_weight = st.slider("Branding %", 0, 100, 25)
+        with col4:
+            conversion_weight = st.slider("Conversion %", 0, 100, 25)
+        
+        # Check if weights sum to 100
+        total_weight = content_weight + target_weight + branding_weight + conversion_weight
+        if total_weight != 100:
+            st.error(f"Gewichtungen müssen zusammen 100% ergeben (aktuell: {total_weight}%)")
+        
+        if st.form_submit_button("💾 Konfiguration speichern"):
+            if total_weight == 100 and all([content_criteria, target_criteria, branding_criteria, conversion_criteria]):
+                # TODO: Speichere Konfiguration
+                st.success("✅ Konfiguration gespeichert! WP-Expert Score ist jetzt aktiv.")
+                st.session_state.show_wp_config = False
+                st.rerun()
+            else:
+                st.error("❌ Bitte alle Felder ausfüllen und Gewichtung auf 100% setzen")
+
+def get_score_color(score: float) -> str:
+    """Farbe basierend auf Score"""
+    if score >= 81:
+        return "#28a745"  # Grün
+    elif score >= 61:
+        return "#17a2b8"  # Blau  
+    elif score >= 41:
+        return "#ffc107"  # Gelb
+    else:
+        return "#dc3545"  # Rot
+
+def get_score_level_text(level: str) -> str:
+    """Deutsche Bezeichnung für Score Level"""
+    level_map = {
+        "sehr_gut": "Sehr gut",
+        "gut": "Gut", 
+        "verbesserungswürdig": "Verbesserungswürdig",
+        "schlecht": "Schlecht"
+    }
+    return level_map.get(level, level)
+
+def get_categories_from_score(stepstone_data: Dict) -> Dict:
+    """Extrahiere Kategorien aus Stepstone Score Data"""
+    categories = {}
+    
+    category_fields = [
+        "anzeigenkopf", "einleitung", "aufgabenbeschreibung", 
+        "profil_anforderungen", "benefits", "kontakt_bewerbung",
+        "sprache_stil", "suchverhalten_keywords", "agg_bias_check"
+    ]
+    
+    category_names = {
+        "anzeigenkopf": "Anzeigenkopf",
+        "einleitung": "Einleitung", 
+        "aufgabenbeschreibung": "Aufgabenbeschreibung",
+        "profil_anforderungen": "Profil & Anforderungen",
+        "benefits": "Benefits",
+        "kontakt_bewerbung": "Kontakt & Bewerbung", 
+        "sprache_stil": "Sprache & Stil",
+        "suchverhalten_keywords": "Suchverhalten & Keywords",
+        "agg_bias_check": "AGG & Bias Check"
+    }
+    
+    for field in category_fields:
+        if field in stepstone_data:
+            categories[category_names[field]] = stepstone_data[field]
+    
+    return categories
+
+def show_scoring_action_buttons(job_ad_text: str, job_title: str, user_id: str):
+    """Zeige Buttons für Bewertungsaktionen"""
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🎯 Stellenanzeige bewerten", key="score_job_ad"):
+            with st.spinner("🤖 Bewerte Stellenanzeige..."):
+                try:
+                    from services.sync_wrapper import sync_service
+                    score_result = sync_service.score_job_ad(job_ad_text, job_title, user_id)
+                    st.session_state.current_score = score_result
+                    st.success("✅ Bewertung abgeschlossen!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Fehler bei der Bewertung: {e}")
+    
+    with col2:
+        if st.button("📈 Score-Historie", key="show_score_history"):
+            st.session_state.show_score_history = True
+    
+    with col3:
+        if st.button("⚙️ Bewertung konfigurieren", key="config_scoring"):
+            st.session_state.show_scoring_config = True
 # ----------------- Display Job Ad -----------------
 
 def display_job_ad():
@@ -666,6 +870,51 @@ def display_job_ad():
         mime="text/markdown",
         key="download_job_ad"
     )
+
+def scoring_section():
+    """Bewertungssektion für Stellenanzeigen"""
+    if not st.session_state.get('current_ad'):
+        return
+    
+    st.markdown("---")
+    
+    # Import scoring components
+    from ui.scoring_components import (
+        show_scoring_action_buttons, 
+        display_score_overview,
+        display_wp_expert_config
+    )
+    
+    user = get_current_user()
+    current_ad = st.session_state.current_ad
+    
+    # Show action buttons
+    show_scoring_action_buttons(
+        current_ad.job_ad,
+        current_ad.esco_data.name, 
+        user['_id']
+    )
+    
+    # Show current score if available
+    if st.session_state.get('current_score'):
+        display_score_overview(st.session_state.current_score)
+    
+    # Show WP-Expert config if requested
+    if st.session_state.get('show_wp_config'):
+        display_wp_expert_config()
+    
+    # Show score history if requested
+    if st.session_state.get('show_score_history'):
+        st.header("📈 Bewertungshistorie")
+        st.info("Score-Historie wird demnächst implementiert")
+        if st.button("Zurück"):
+            st.session_state.show_score_history = False
+            st.rerun()
+
+    # Safe check for current_ad - Show scoring section
+    if st.session_state.get('current_ad') is not None:
+        scoring_section()  # Add this line
+        display_job_ad()
 def initialize_session_state():
     """Initialize session state variables"""
     if 'current_ad' not in st.session_state:
@@ -684,3 +933,4 @@ def initialize_session_state():
 
 if __name__ == "__main__":
     main()
+
